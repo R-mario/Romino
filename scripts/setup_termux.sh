@@ -25,9 +25,10 @@ BUILD_JOBS="${BUILD_JOBS:-4}"
 mkdir -p "$BIN_DIR" "$MODELS_DIR"
 
 echo "[1/6] Actualizando paquetes de Termux..."
-pkg update -y
-pkg upgrade -y
-pkg install -y \
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
   git \
   cmake \
   clang \
@@ -98,6 +99,7 @@ if [ "$INSTALL_BARK" = "1" ]; then
   fi
 
   cmake -S "$BARK_DIR" -B "$BARK_DIR/build" -G Ninja \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF \
     -DBARK_BUILD_TESTS=OFF

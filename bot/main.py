@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from telegram import BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from bot.config import BotConfig
@@ -44,6 +45,19 @@ def build_application(env_path: Path | None = None) -> Any:
     async def post_init(application: Any) -> None:
         nonlocal delayed_task
         delayed_task = asyncio.create_task(controller.delayed_loop(application.bot))
+        try:
+            await application.bot.set_my_commands(
+                [
+                    BotCommand("romino_voz", "Generar nota de voz con Suno Bark"),
+                    BotCommand("romino_id", "Ver ID de este chat"),
+                    BotCommand("romino_reset", "Limpiar contexto reciente del chat"),
+                    BotCommand("romino_memoria", "Ver/editar memoria del grupo (admin)"),
+                    BotCommand("romino_config", "Ajustar probabilidades y modos (admin)"),
+                    BotCommand("romino_status", "Estado del LLM, voz y batería (admin)"),
+                ]
+            )
+        except Exception as exc:
+            logger.warning("No se pudieron registrar comandos en Telegram: %s", exc)
         logger.info(
             "Bot inicializado. Grupos autorizados: %s",
             sorted(config.allowed_chat_ids) if config.allowed_chat_ids else "TODOS (modo descubrimiento)",
@@ -69,13 +83,13 @@ def build_application(env_path: Path | None = None) -> Any:
     )
 
     app.add_handler(CommandHandler("start", controller.cmd_start))
-    app.add_handler(CommandHandler("help", controller.cmd_start))
-    app.add_handler(CommandHandler("id", controller.cmd_id))
-    app.add_handler(CommandHandler("reset", controller.cmd_reset))
-    app.add_handler(CommandHandler("status", controller.cmd_status))
-    app.add_handler(CommandHandler("config", controller.cmd_config))
-    app.add_handler(CommandHandler("memoria", controller.cmd_memoria))
-    app.add_handler(CommandHandler("voz", controller.cmd_voz))
+    app.add_handler(CommandHandler("romino_help", controller.cmd_start))
+    app.add_handler(CommandHandler("romino_id", controller.cmd_id))
+    app.add_handler(CommandHandler("romino_reset", controller.cmd_reset))
+    app.add_handler(CommandHandler("romino_status", controller.cmd_status))
+    app.add_handler(CommandHandler("romino_config", controller.cmd_config))
+    app.add_handler(CommandHandler("romino_memoria", controller.cmd_memoria))
+    app.add_handler(CommandHandler("romino_voz", controller.cmd_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, controller.handle_message))
     return app
 

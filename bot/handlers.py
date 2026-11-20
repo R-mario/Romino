@@ -130,7 +130,7 @@ def format_runtime_config(config: BotConfig) -> str:
         f"- memory: {config.memory_enabled} (cada {config.memory_update_every_messages} msgs, max {config.memory_max_chars} chars)\n"
         f"- max_tokens: {config.max_tokens}\n"
         f"- temp: {config.temperature}\n\n"
-        "Uso: /config <parametro> <valor> | /config reset"
+        "Uso: /romino_config <parametro> <valor> | /romino_config reset"
     )
 
 
@@ -297,7 +297,7 @@ class BotController:
             await msg.reply_text(reset_runtime_config(self.config))
             return
         if len(args) != 2:
-            await msg.reply_text("Uso correcto: /config <parametro> <valor> o /config reset")
+            await msg.reply_text("Uso correcto: /romino_config <parametro> <valor> o /romino_config reset")
             return
         try:
             summary = apply_runtime_config(self.config, args[0], args[1])
@@ -366,7 +366,7 @@ class BotController:
             await msg.reply_text(
                 f"Memoria actual de este chat ({count}/{self.config.memory_update_every_messages} msgs para auto-resumen):\n"
                 f"{current}\n\n"
-                "Uso: /memoria [set <texto> | add <nota> | refresh | clear]"
+                "Uso: /romino_memoria [set <texto> | add <nota> | refresh | clear]"
             )
             return
 
@@ -395,7 +395,7 @@ class BotController:
             else:
                 await msg.reply_text("No hay mensajes suficientes o falló el resumen.")
         else:
-            await msg.reply_text("Uso: /memoria [set <texto> | add <nota> | refresh | clear]")
+            await msg.reply_text("Uso: /romino_memoria [set <texto> | add <nota> | refresh | clear]")
 
     async def cmd_voz(self, update: Any, context: Any) -> None:
         """Sintetiza un texto directo (/voz hola) o responde por voz al mensaje citado."""
@@ -415,7 +415,7 @@ class BotController:
         quoted_text = (getattr(reply_to, "text", None) or "").strip() if reply_to else ""
 
         if not direct_text and not quoted_text:
-            await msg.reply_text("Uso: /voz <texto> o responde a un mensaje con /voz")
+            await msg.reply_text("Uso: /romino_voz <texto> o responde a un mensaje con /romino_voz")
             return
 
         if self.busy_semaphore.locked():

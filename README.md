@@ -90,30 +90,34 @@ sv-enable telegram-bot && sv up telegram-bot
 
 ## Comandos del Bot y Ajuste en Caliente
 
+Todos los comandos llevan prefijo `/romino_` para no colisionar con otros bots en grupos (y se registran automáticamente en el menú `/` de Telegram):
+
 | Comando | Quién puede usarlo | Función |
 | :--- | :--- | :--- |
-| `/id` | Cualquier chat | Muestra el `chat_id` actual y el `user_id` para configurar `.env`. |
-| `/reset` | Grupos autorizados | Borra el buffer de memoria del chat actual. |
-| `/status` | Administrador | Comprueba salud y latencia de `llama-server`, disponibilidad de `bark.cpp`, ocupación del motor y temperatura/batería (`Termux:API`). |
-| `/config` | Administrador | Muestra la configuración activa, ajusta parámetros en caliente (persistidos en `runtime_overrides.json` para sobrevivir reinicios) o restaura `.env` con `/config reset`. |
-| `/memoria` | Administrador | Consulta, edita, fuerza resumen o borra la memoria evolutiva de este chat (`/memoria [set <texto> \| add <nota> \| refresh \| clear]`). |
-| `/voz` | Grupos autorizados | Sintetiza audio con **Suno Bark (`bark.cpp` `Q4_0`)** y lo envía como nota de voz Opus (`/voz <texto>` o respondiendo a un mensaje con `/voz`). |
+| `/romino_id` | Cualquier chat | Muestra el `chat_id` actual y el `user_id` para configurar `.env`. |
+| `/romino_reset` | Grupos autorizados | Borra el buffer de memoria a corto plazo del chat actual. |
+| `/romino_status` | Administrador | Comprueba salud y latencia de `llama-server`, disponibilidad de `bark.cpp`, ocupación del motor y temperatura/batería (`Termux:API`). |
+| `/romino_config` | Administrador | Muestra la configuración activa, ajusta parámetros en caliente (persistidos en `runtime_overrides.json` para sobrevivir reinicios) o restaura `.env` con `/romino_config reset`. |
+| `/romino_memoria` | Administrador | Consulta, edita, fuerza resumen o borra la memoria evolutiva de este chat (`/romino_memoria [set <texto> \| add <nota> \| refresh \| clear]`). |
+| `/romino_voz` | Grupos autorizados | Sintetiza audio con **Suno Bark (`bark.cpp` `Q4_0`)** y lo envía como nota de voz Opus (`/romino_voz <texto>` o respondiendo a un mensaje con `/romino_voz`). |
 
 Ejemplos de ajuste en caliente:
 ```text
-/config random 0.08            # 8% de intervención aleatoria inmediata
-/config summary 0.50           # 50% de las aleatorias comentan el resumen reciente del grupo
-/config delayed true           # Activa respuestas diferidas a mensajes pasados
-/config delayed_prob 0.20      # 20% de probabilidad por ciclo diferido
-/config delayed_min_age 300    # Mensajes pasados de al menos 5 minutos
-/config delayed_max_age 7200   # Hasta 2 horas de antigüedad
-/config delayed_cooldown 1800  # Mínimo 30 minutos entre diferidos en el mismo grupo
-/config delayed_summary 0.25   # 25% de diferidos comentan resumen, 75% responden a un msg concreto
-/config tts true               # Activa/desactiva notas de voz con bark.cpp
-/config voice 0.10             # 10% de respuestas inmediatas en nota de voz
-/config delayed_voice 0.35     # 35% de intervenciones diferidas en nota de voz
-/config tts_max_chars 140      # Límite de caracteres por audio (controla latencia en SD810)
-/config max_tokens 100         # Recorta longitud máxima para acelerar respuestas
+/romino_config random 0.08            # 8% de intervención aleatoria inmediata
+/romino_config summary 0.50           # 50% de las aleatorias comentan el resumen reciente del grupo
+/romino_config delayed true           # Activa respuestas diferidas a mensajes pasados
+/romino_config delayed_prob 0.20      # 20% de probabilidad por ciclo diferido
+/romino_config delayed_min_age 300    # Mensajes pasados de al menos 5 minutos
+/romino_config delayed_max_age 7200   # Hasta 2 horas de antigüedad
+/romino_config delayed_cooldown 1800  # Mínimo 30 minutos entre diferidos en el mismo grupo
+/romino_config delayed_summary 0.25   # 25% de diferidos comentan resumen, 75% responden a un msg concreto
+/romino_config tts true               # Activa/desactiva notas de voz con bark.cpp
+/romino_config voice 0.10             # 10% de respuestas inmediatas en nota de voz
+/romino_config delayed_voice 0.35     # 35% de intervenciones diferidas en nota de voz
+/romino_config tts_max_chars 140      # Límite de caracteres por audio (controla latencia)
+/romino_config memory true            # Activa/desactiva memoria evolutiva por grupo
+/romino_config memory_every 20        # Auto-resumen cada 20 mensajes nuevos
+/romino_config max_tokens 100         # Recorta longitud máxima para acelerar respuestas
 ```
 
 ---

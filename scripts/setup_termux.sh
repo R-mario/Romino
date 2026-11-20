@@ -107,11 +107,17 @@ if [ "$INSTALL_BARK" = "1" ]; then
       git clone --recursive --depth 1 https://github.com/PABannier/bark.cpp.git "$BARK_DIR"
     fi
 
+    if [ -f "$REPO_DIR/scripts/patch_bark_fast_fine.py" ]; then
+      python "$REPO_DIR/scripts/patch_bark_fast_fine.py" "$BARK_DIR/bark.cpp"
+    fi
+
     cmake -S "$BARK_DIR" -B "$BARK_DIR/build" -G Ninja \
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_SHARED_LIBS=OFF \
-      -DBARK_BUILD_TESTS=OFF
+      -DBARK_BUILD_TESTS=OFF \
+      -DCMAKE_C_FLAGS="-O3 -march=armv8.2-a+fp16" \
+      -DCMAKE_CXX_FLAGS="-O3 -march=armv8.2-a+fp16"
     cmake --build "$BARK_DIR/build" --config Release -j"$BUILD_JOBS" \
       --target main quantize
 

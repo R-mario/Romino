@@ -42,32 +42,36 @@ apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--fo
   termux-services \
   termux-api
 
-echo "[2/6] Clonando o actualizando llama.cpp..."
-if [ -d "$LLAMA_DIR/.git" ]; then
-  git -C "$LLAMA_DIR" pull --ff-only
+echo "[2/6] Verificando binarios llama-server y llama-bench..."
+if [ ! -x "$BIN_DIR/llama-server" ] || [ ! -x "$BIN_DIR/llama-bench" ] || [ "${FORCE_REBUILD:-0}" = "1" ]; then
+  if [ -d "$LLAMA_DIR/.git" ]; then
+    git -C "$LLAMA_DIR" pull --ff-only
+  else
+    git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$LLAMA_DIR"
+  fi
+
+  echo "[3/6] Compilando llama-server y llama-bench estáticos (CPU ARM64 NEON)..."
+  cmake -S "$LLAMA_DIR" -B "$LLAMA_DIR/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DLLAMA_CURL=OFF \
+    -DGGML_VULKAN=OFF \
+    -DLLAMA_BUILD_TESTS=OFF \
+    -DLLAMA_BUILD_EXAMPLES=OFF
+
+  cmake --build "$LLAMA_DIR/build" --config Release -j"$BUILD_JOBS" \
+    --target llama-server llama-bench
+
+  cp "$LLAMA_DIR/build/bin/llama-server" "$BIN_DIR/llama-server"
+  cp "$LLAMA_DIR/build/bin/llama-bench" "$BIN_DIR/llama-bench"
+  chmod +x "$BIN_DIR/llama-server" "$BIN_DIR/llama-bench"
+
+  if [ "$CLEAN_BUILD_DIRS" = "1" ]; then
+    echo "Limpiando archivos intermedios de compilación de llama.cpp..."
+    rm -rf "$LLAMA_DIR/build"
+  fi
 else
-  git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$LLAMA_DIR"
-fi
-
-echo "[3/6] Compilando llama-server y llama-bench estáticos (CPU ARM64 NEON, ahorro 16 GB)..."
-cmake -S "$LLAMA_DIR" -B "$LLAMA_DIR/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_SHARED_LIBS=OFF \
-  -DLLAMA_CURL=OFF \
-  -DGGML_VULKAN=OFF \
-  -DLLAMA_BUILD_TESTS=OFF \
-  -DLLAMA_BUILD_EXAMPLES=OFF
-
-cmake --build "$LLAMA_DIR/build" --config Release -j"$BUILD_JOBS" \
-  --target llama-server llama-bench
-
-cp "$LLAMA_DIR/build/bin/llama-server" "$BIN_DIR/llama-server"
-cp "$LLAMA_DIR/build/bin/llama-bench" "$BIN_DIR/llama-bench"
-chmod +x "$BIN_DIR/llama-server" "$BIN_DIR/llama-bench"
-
-if [ "$CLEAN_BUILD_DIRS" = "1" ]; then
-  echo "Limpiando archivos intermedios de compilación de llama.cpp..."
-  rm -rf "$LLAMA_DIR/build"
+  echo "[3/6] llama-server y llama-bench ya compilados en $BIN_DIR (omitido)."
 fi
 
 echo "[4/6] Verificando modelo Qwen2.5-0.5B-Instruct (Q4_0)..."
@@ -90,29 +94,38 @@ if [ ! -f "$REPO_DIR/.env" ]; then
 fi
 
 if [ "$INSTALL_BARK" = "1" ]; then
-  echo "[6/6] Compilando bark.cpp (Suno Bark GGML) y preparando bark-small Q4_0..."
-  if [ -d "$BARK_DIR/.git" ]; then
-    git -C "$BARK_DIR" pull --ff-only
-    git -C "$BARK_DIR" submodule update --init --recursive
+  echo "[6/6] Verificando bark.cpp (Suno Bark GGML) y modelo bark-small Q4_0..."
+  if [ ! -x "$BIN_DIR/bark-quantize" ] && [ -x "$BARK_DIR/build/examples/quantize/quantize" ]; then
+    cp "$BARK_DIR/build/examples/quantize/quantize" "$BIN_DIR/bark-quantize"
+    chmod +x "$BIN_DIR/bark-quantize"
+  fi
+  if [ ! -x "$BIN_DIR/bark-main" ] || [ ! -x "$BIN_DIR/bark-quantize" ] || [ "${FORCE_REBUILD:-0}" = "1" ]; then
+    if [ -d "$BARK_DIR/.git" ]; then
+      git -C "$BARK_DIR" pull --ff-only
+      git -C "$BARK_DIR" submodule update --init --recursive
+    else
+      git clone --recursive --depth 1 https://github.com/PABannier/bark.cpp.git "$BARK_DIR"
+    fi
+
+    cmake -S "$BARK_DIR" -B "$BARK_DIR/build" -G Ninja \
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DBARK_BUILD_TESTS=OFF
+    cmake --build "$BARK_DIR/build" --config Release -j"$BUILD_JOBS" \
+      --target main quantize
+
+    cp "$BARK_DIR/build/examples/main/main" "$BIN_DIR/bark-main"
+    cp "$BARK_DIR/build/examples/quantize/quantize" "$BIN_DIR/bark-quantize"
+    chmod +x "$BIN_DIR/bark-main" "$BIN_DIR/bark-quantize"
   else
-    git clone --recursive --depth 1 https://github.com/PABannier/bark.cpp.git "$BARK_DIR"
+    echo "Binarios bark-main y bark-quantize ya presentes en $BIN_DIR."
   fi
 
-  cmake -S "$BARK_DIR" -B "$BARK_DIR/build" -G Ninja \
-    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DBARK_BUILD_TESTS=OFF
-  cmake --build "$BARK_DIR/build" --config Release -j"$BUILD_JOBS" \
-    --target main quantize
-
-  cp "$BARK_DIR/build/examples/main/main" "$BIN_DIR/bark-main"
-  chmod +x "$BIN_DIR/bark-main"
-
   if [ ! -f "$BARK_Q4_FILE" ]; then
-    echo "Descargando pesos GGML bark-small (f16) para cuantizar a Q4_0..."
-    wget -c -O "$BARK_F16_FILE" "$BARK_F16_URL"
-    "$BARK_DIR/build/examples/quantize/quantize" "$BARK_F16_FILE" "$BARK_Q4_FILE" q4_0
+    echo "Descargando/reanudando pesos GGML bark-small (f16) para cuantizar a Q4_0..."
+    wget -c --progress=dot:giga -O "$BARK_F16_FILE" "$BARK_F16_URL"
+    "$BIN_DIR/bark-quantize" "$BARK_F16_FILE" "$BARK_Q4_FILE" q4_0
     rm -f "$BARK_F16_FILE"
     echo "Modelo cuantizado listo en $BARK_Q4_FILE"
   else

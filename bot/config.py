@@ -144,7 +144,7 @@ class BotConfig:
     tts_enabled: bool = True
     bark_bin: str = "~/bin/bark-main"
     bark_model_path: str = "~/models/bark-small_weights-q4_0.bin"
-    bark_threads: int = 4
+    bark_threads: int = 8
     bark_timeout_seconds: float = 180.0
     voice_reply_probability: float = 0.10
     delayed_voice_probability: float = 0.35
@@ -265,7 +265,7 @@ class BotConfig:
             tts_enabled=_parse_bool(get("TTS_ENABLED"), True),
             bark_bin=get("BARK_BIN") or cls.bark_bin,
             bark_model_path=get("BARK_MODEL_PATH") or cls.bark_model_path,
-            bark_threads=int(get("BARK_THREADS", "4")),
+            bark_threads=int(get("BARK_THREADS", "8")),
             bark_timeout_seconds=float(get("BARK_TIMEOUT_SECONDS", "180")),
             voice_reply_probability=float(get("VOICE_REPLY_PROBABILITY", "0.10")),
             delayed_voice_probability=float(get("DELAYED_VOICE_PROBABILITY", "0.35")),

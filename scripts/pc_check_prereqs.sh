@@ -10,6 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DL_DIR="$REPO_DIR/downloads"
 
+if [ -d "$REPO_DIR/tools/platform-tools" ]; then
+  export PATH="$REPO_DIR/tools/platform-tools:$PATH"
+fi
+
 MISSING_TOOLS=0
 MISSING_FILES=0
 

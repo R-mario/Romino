@@ -6,6 +6,25 @@ El OnePlus 2 (`oneplus2`) finalizó soporte oficial en **OxygenOS 3.6.1 (Android
 
 ---
 
+## 0. Nota importante para entornos WSL2 (Windows)
+
+Si ejecutas los scripts desde **WSL2**, los dispositivos USB conectados a Windows no aparecen automáticamente en Linux. Tienes dos opciones:
+
+- **Opción A (Usar WSL2 directamente con `usbipd-win`):**
+  En PowerShell como Administrador en Windows:
+  ```powershell
+  winget install --exact dorssel.usbipd-win
+  usbipd list
+  usbipd bind --busid <BUSID_DEL_ONEPLUS2>
+  usbipd attach --wsl --busid <BUSID_DEL_ONEPLUS2>
+  ```
+  *(Nota: al pasar de modo Android/ADB a modo Fastboot o TWRP Sideload, el ID USB del teléfono cambia; si `fastboot devices` o `adb devices` no lo ven en WSL2, vuelve a ejecutar `usbipd list` y `usbipd attach --wsl --busid <BUSID>`).*
+
+- **Opción B (Ejecutar `adb.exe` / `fastboot.exe` en PowerShell de Windows):**
+  Puedes usar directamente los mismos archivos ya descargados en `\\wsl$\...\home\mario\oneplus2-llm-bot\downloads\` desde PowerShell con los `platform-tools` de Windows (los drivers USB de OnePlus/Google evitan el paso por `usbipd`).
+
+---
+
 ## 1. Selección de versión de LineageOS recomendada
 
 Para usar el OnePlus 2 exclusivamente como servidor local de LLM + Bot de Telegram:
@@ -58,14 +77,15 @@ Descargas necesarias en tu PC:
 ## 4. Flasheo limpio de LineageOS (sin GApps)
 
 Dentro de **TWRP**:
-1. Ve a **Wipe → Advanced Wipe** y selecciona **Dalvik / ART Cache**, **System**, **Data** y **Cache** (desliza para confirmar).
-2. Ve a **Advanced → ADB Sideload** y desliza para iniciar la escucha.
-3. Desde el PC, envía el ZIP de LineageOS:
+1. **Imprescindible al venir de OxygenOS 6.0.1:** ve a **Wipe → Format Data**, escribe `yes` y confirma (elimina incompatibilidades de cifrado entre OxygenOS 6 y LineageOS 17.1). Después vuelve atrás y entra en **Reboot → Recovery** para que TWRP monte `/data` limpio.
+2. Ve a **Wipe → Advanced Wipe** y selecciona **Dalvik / ART Cache**, **System**, **Data** y **Cache** (desliza para confirmar).
+3. Ve a **Advanced → ADB Sideload** y desliza para iniciar la escucha.
+4. Desde el PC, envía el ZIP de LineageOS:
    ```bash
-   adb sideload lineage-XX.X-XXXXXXXX-oneplus2.zip
+   adb sideload lineage-17.1-20210605-nightly-oneplus2-signed.zip
    ```
-4. *(Opcional, para root)* Si vas a limitar la carga de batería con ACC, vuelve a **ADB Sideload** y envía Magisk (`Magisk-vXX.X.zip`, renombrando `.apk` a `.zip`).
-5. Pulsa **Reboot System**. El primer arranque tardará entre 3 y 5 minutos.
+5. *(Opcional, para root)* Si vas a limitar la carga de batería con ACC, vuelve a **ADB Sideload** y envía Magisk (`downloads/Magisk-v31.1.zip`).
+6. Pulsa **Reboot System**. El primer arranque tardará entre 3 y 5 minutos.
 
 ---
 

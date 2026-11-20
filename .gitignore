@@ -3,6 +3,8 @@ runtime_overrides.json
 downloads/*.img
 downloads/*.zip
 downloads/*.apk
+downloads/*.part
+tools/platform-tools/
 __pycache__/
 *.py[cod]
 .venv/

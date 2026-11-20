@@ -18,6 +18,10 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DL_DIR="$REPO_DIR/downloads"
 STEP="${2:-}"
 
+if [ -d "$REPO_DIR/tools/platform-tools" ]; then
+  export PATH="$REPO_DIR/tools/platform-tools:$PATH"
+fi
+
 if [ "${1:-}" != "--step" ] || [ -z "$STEP" ]; then
   echo "Uso: $0 --step <unlock|twrp|sideload|postboot|all>"
   exit 1
@@ -95,8 +99,9 @@ step_sideload() {
 
   echo "=== Paso 3: Instalación de LineageOS ($(basename "$rom_zip")) ==="
   echo "En TWRP del teléfono:"
-  echo "  1. Wipe -> Advanced Wipe -> selecciona Dalvik/ART Cache, System, Data y Cache -> desliza."
-  echo "  2. Advanced -> ADB Sideload -> desliza para escuchar."
+  echo "  1. (Viniendo de OxygenOS) Wipe -> Format Data -> escribe 'yes' -> Reboot -> Recovery."
+  echo "  2. Wipe -> Advanced Wipe -> selecciona Dalvik/ART Cache, System, Data y Cache -> desliza."
+  echo "  3. Advanced -> ADB Sideload -> desliza para escuchar."
   confirm "¿Está TWRP esperando en modo ADB Sideload?"
   adb sideload "$rom_zip"
 

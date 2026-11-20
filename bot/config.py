@@ -140,6 +140,17 @@ class BotConfig:
     # Concurrencia
     notify_when_busy: bool = False
 
+    # Síntesis de voz local (bark.cpp GGML bajo demanda)
+    tts_enabled: bool = True
+    bark_bin: str = "~/bark.cpp/build/examples/main/main"
+    bark_model_path: str = "~/models/bark-small_weights-q4_0.bin"
+    bark_threads: int = 4
+    bark_timeout_seconds: float = 180.0
+    voice_reply_probability: float = 0.10
+    delayed_voice_probability: float = 0.35
+    tts_max_chars: int = 140
+    tts_send_text_caption: bool = False
+
     # Persistencia de ajustes en caliente (/config)
     overrides_path: Path | None = None
     env_path: Path | None = None
@@ -166,6 +177,15 @@ class BotConfig:
         _validate_probability("SUMMARY_INTERVENTION_RATIO", self.summary_intervention_ratio)
         _validate_probability("DELAYED_REPLY_PROBABILITY", self.delayed_reply_probability)
         _validate_probability("DELAYED_SUMMARY_RATIO", self.delayed_summary_ratio)
+        _validate_probability("VOICE_REPLY_PROBABILITY", self.voice_reply_probability)
+        _validate_probability("DELAYED_VOICE_PROBABILITY", self.delayed_voice_probability)
+
+        if self.bark_threads <= 0:
+            raise ValueError("BARK_THREADS debe ser mayor que 0.")
+        if self.bark_timeout_seconds <= 0:
+            raise ValueError("BARK_TIMEOUT_SECONDS debe ser mayor que 0.")
+        if self.tts_max_chars < 20:
+            raise ValueError("TTS_MAX_CHARS debe ser al menos 20.")
 
         _validate_non_negative("GROUP_COOLDOWN_SECONDS", self.group_cooldown_seconds)
         _validate_non_negative("DELAYED_REPLY_MIN_AGE_SECONDS", self.delayed_reply_min_age_seconds)
@@ -240,6 +260,15 @@ class BotConfig:
             delayed_reply_cooldown_seconds=int(get("DELAYED_REPLY_COOLDOWN_SECONDS", "1800")),
             delayed_summary_ratio=float(get("DELAYED_SUMMARY_RATIO", "0.25")),
             notify_when_busy=_parse_bool(get("NOTIFY_WHEN_BUSY"), False),
+            tts_enabled=_parse_bool(get("TTS_ENABLED"), True),
+            bark_bin=get("BARK_BIN") or cls.bark_bin,
+            bark_model_path=get("BARK_MODEL_PATH") or cls.bark_model_path,
+            bark_threads=int(get("BARK_THREADS", "4")),
+            bark_timeout_seconds=float(get("BARK_TIMEOUT_SECONDS", "180")),
+            voice_reply_probability=float(get("VOICE_REPLY_PROBABILITY", "0.10")),
+            delayed_voice_probability=float(get("DELAYED_VOICE_PROBABILITY", "0.35")),
+            tts_max_chars=int(get("TTS_MAX_CHARS", "140")),
+            tts_send_text_caption=_parse_bool(get("TTS_SEND_TEXT_CAPTION"), False),
             overrides_path=overrides_path,
             env_path=env_path,
         )

@@ -94,8 +94,9 @@ sv-enable telegram-bot && sv up telegram-bot
 | :--- | :--- | :--- |
 | `/id` | Cualquier chat | Muestra el `chat_id` actual y el `user_id` para configurar `.env`. |
 | `/reset` | Grupos autorizados | Borra el buffer de memoria del chat actual. |
-| `/status` | Administrador | Comprueba salud y latencia de `llama-server`, ocupación del motor y temperatura/batería (`Termux:API`). |
+| `/status` | Administrador | Comprueba salud y latencia de `llama-server`, disponibilidad de `bark.cpp`, ocupación del motor y temperatura/batería (`Termux:API`). |
 | `/config` | Administrador | Muestra la configuración activa, ajusta parámetros en caliente (persistidos en `runtime_overrides.json` para sobrevivir reinicios) o restaura `.env` con `/config reset`. |
+| `/voz` | Grupos autorizados | Sintetiza audio con **Suno Bark (`bark.cpp` `Q4_0`)** y lo envía como nota de voz Opus (`/voz <texto>` o respondiendo a un mensaje con `/voz`). |
 
 Ejemplos de ajuste en caliente:
 ```text
@@ -107,6 +108,10 @@ Ejemplos de ajuste en caliente:
 /config delayed_max_age 7200   # Hasta 2 horas de antigüedad
 /config delayed_cooldown 1800  # Mínimo 30 minutos entre diferidos en el mismo grupo
 /config delayed_summary 0.25   # 25% de diferidos comentan resumen, 75% responden a un msg concreto
+/config tts true               # Activa/desactiva notas de voz con bark.cpp
+/config voice 0.10             # 10% de respuestas inmediatas en nota de voz
+/config delayed_voice 0.35     # 35% de intervenciones diferidas en nota de voz
+/config tts_max_chars 140      # Límite de caracteres por audio (controla latencia en SD810)
 /config max_tokens 100         # Recorta longitud máxima para acelerar respuestas
 ```
 

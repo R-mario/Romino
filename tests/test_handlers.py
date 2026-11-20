@@ -37,6 +37,7 @@ class _FakeBot:
         self.first_name = "OnePlusBot"
         self.actions: list[tuple[int, str]] = []
         self.sent_messages: list[dict[str, Any]] = []
+        self.sent_voices: list[dict[str, Any]] = []
         self._next_msg_id = 500
 
     async def send_chat_action(self, chat_id: int, action: str) -> None:
@@ -54,6 +55,40 @@ class _FakeBot:
         }
         self.sent_messages.append(entry)
         return SimpleNamespace(message_id=self._next_msg_id)
+
+    async def send_voice(
+        self,
+        chat_id: int,
+        voice: bytes,
+        reply_to_message_id: int | None = None,
+        caption: str | None = None,
+    ) -> Any:
+        self._next_msg_id += 1
+        entry = {
+            "message_id": self._next_msg_id,
+            "chat_id": chat_id,
+            "voice": voice,
+            "reply_to_message_id": reply_to_message_id,
+            "caption": caption,
+        }
+        self.sent_voices.append(entry)
+        return SimpleNamespace(message_id=self._next_msg_id)
+
+
+class _StubTTS:
+    def __init__(self, available: bool = True, fail: bool = False) -> None:
+        self.available = available
+        self.fail = fail
+        self.calls: list[str] = []
+
+    def is_available(self) -> bool:
+        return self.available
+
+    async def synthesize_ogg(self, text: str) -> bytes:
+        self.calls.append(text)
+        if self.fail:
+            raise RuntimeError("bark timeout")
+        return b"OggS_TEST_AUDIO"
 
 
 class _FakeMessage:
@@ -265,6 +300,60 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(overrides_file.exists())
             self.assertAlmostEqual(cfg.random_reply_probability, 0.05)
             self.assertIn("restaurada", m2.replies[0])
+
+    async def test_delayed_reply_sends_voice_when_selected_and_falls_back_on_error(self) -> None:
+        cfg = BotConfig(
+            telegram_bot_token="123:abc",
+            allowed_chat_ids={-1001},
+            delayed_reply_enabled=True,
+            delayed_reply_probability=1.0,
+            delayed_reply_min_age_seconds=300,
+            delayed_reply_max_age_seconds=3600,
+            delayed_reply_cooldown_seconds=0,
+            delayed_summary_ratio=0.0,
+            delayed_voice_probability=1.0,
+            group_cooldown_seconds=0,
+        )
+        store = GroupContextStore()
+        now = 5000.0
+        store.add_message(-1001, 42, "Marta", "Habéis visto el partido?", timestamp=now - 1000)
+
+        tts_ok = _StubTTS(available=True, fail=False)
+        controller = BotController(
+            cfg, store, _StubLLM(reply="Vaya remontada al final."), tts_client=tts_ok, rng=_FixedRng([0.0, 0.9, 0.0])
+        )
+        bot = _FakeBot()
+        fired = await controller.run_delayed_cycle(bot, now=now)
+        self.assertTrue(fired)
+        self.assertEqual(len(bot.sent_voices), 1)
+        self.assertEqual(bot.sent_voices[0]["reply_to_message_id"], 42)
+        self.assertEqual(bot.sent_messages, [])
+
+        # Si bark.cpp falla, debe hacer fallback limpio a texto
+        store.add_message(-1001, 43, "Luis", "Alguien juega hoy?", timestamp=now - 900)
+        tts_fail = _StubTTS(available=True, fail=True)
+        controller_fail = BotController(
+            cfg, store, _StubLLM(reply="Me apunto luego."), tts_client=tts_fail, rng=_FixedRng([0.0, 0.9, 0.0])
+        )
+        bot2 = _FakeBot()
+        fired2 = await controller_fail.run_delayed_cycle(bot2, now=now)
+        self.assertTrue(fired2)
+        self.assertEqual(bot2.sent_voices, [])
+        self.assertEqual(len(bot2.sent_messages), 1)
+        self.assertEqual(bot2.sent_messages[0]["reply_to_message_id"], 43)
+
+    async def test_cmd_voz_speaks_direct_text(self) -> None:
+        cfg = BotConfig(telegram_bot_token="123:abc", allowed_chat_ids={-1001})
+        tts = _StubTTS(available=True)
+        controller = BotController(cfg, GroupContextStore(), _StubLLM(), tts_client=tts)
+        bot = _FakeBot()
+        u, m = self._make_update(
+            chat_id=-1001, chat_type="group", user_id=10, user_name="Mario", msg_id=88, text="/voz hola [laughter]"
+        )
+        await controller.cmd_voz(u, SimpleNamespace(bot=bot, args=["hola", "[laughter]"]))
+        self.assertEqual(tts.calls, ["hola [laughter]"])
+        self.assertEqual(len(bot.sent_voices), 1)
+        self.assertEqual(bot.sent_voices[0]["reply_to_message_id"], 88)
 
 
 if __name__ == "__main__":

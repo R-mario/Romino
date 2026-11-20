@@ -11,6 +11,7 @@ from bot.config import BotConfig
 from bot.context import GroupContextStore
 from bot.handlers import BotController
 from bot.llm_client import LlamaClient
+from bot.tts import BarkCppTTS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +27,13 @@ def build_application(env_path: Path | None = None) -> Any:
         max_message_chars=config.max_message_chars,
     )
     llm_client = LlamaClient(config)
-    controller = BotController(config=config, store=store, llm_client=llm_client)
+    tts_client = BarkCppTTS(config)
+    controller = BotController(
+        config=config,
+        store=store,
+        llm_client=llm_client,
+        tts_client=tts_client,
+    )
 
     delayed_task: asyncio.Task[None] | None = None
 
@@ -61,6 +68,7 @@ def build_application(env_path: Path | None = None) -> Any:
     app.add_handler(CommandHandler("reset", controller.cmd_reset))
     app.add_handler(CommandHandler("status", controller.cmd_status))
     app.add_handler(CommandHandler("config", controller.cmd_config))
+    app.add_handler(CommandHandler("voz", controller.cmd_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, controller.handle_message))
     return app
 

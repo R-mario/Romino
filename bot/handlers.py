@@ -22,6 +22,7 @@ from bot.triggers import (
     is_chat_allowed,
     select_delayed_intervention,
 )
+from bot.tts import BarkCppTTS
 
 logger = logging.getLogger(__name__)
 
@@ -35,29 +36,36 @@ def _parse_bool_arg(raw: str) -> bool:
     raise ValueError(f"Se esperaba true/false (recibido: {raw!r})")
 
 
+_RUNTIME_FIELD_MAP: dict[str, tuple[str, Any]] = {
+    "direct": ("direct_reply_enabled", _parse_bool_arg),
+    "random": ("random_reply_probability", float),
+    "summary": ("summary_intervention_ratio", float),
+    "cooldown": ("group_cooldown_seconds", int),
+    "delayed": ("delayed_reply_enabled", _parse_bool_arg),
+    "delayed_prob": ("delayed_reply_probability", float),
+    "delayed_interval": ("delayed_reply_check_interval_seconds", int),
+    "delayed_min_age": ("delayed_reply_min_age_seconds", int),
+    "delayed_max_age": ("delayed_reply_max_age_seconds", int),
+    "delayed_cooldown": ("delayed_reply_cooldown_seconds", int),
+    "delayed_summary": ("delayed_summary_ratio", float),
+    "max_tokens": ("max_tokens", int),
+    "temp": ("temperature", float),
+    "tts": ("tts_enabled", _parse_bool_arg),
+    "voice": ("voice_reply_probability", float),
+    "delayed_voice": ("delayed_voice_probability", float),
+    "tts_max_chars": ("tts_max_chars", int),
+    "tts_caption": ("tts_send_text_caption", _parse_bool_arg),
+}
+
+
 def apply_runtime_config(config: BotConfig, key: str, raw_value: str) -> str:
-    """Ajusta parámetros en caliente con validación atómica (rollback si falla)."""
+    """Ajusta parámetros en caliente con validación atómica y persistencia en JSON."""
     normalized = key.strip().lower()
-    field_map: dict[str, tuple[str, Any]] = {
-        "direct": ("direct_reply_enabled", _parse_bool_arg),
-        "random": ("random_reply_probability", float),
-        "summary": ("summary_intervention_ratio", float),
-        "cooldown": ("group_cooldown_seconds", int),
-        "delayed": ("delayed_reply_enabled", _parse_bool_arg),
-        "delayed_prob": ("delayed_reply_probability", float),
-        "delayed_interval": ("delayed_reply_check_interval_seconds", int),
-        "delayed_min_age": ("delayed_reply_min_age_seconds", int),
-        "delayed_max_age": ("delayed_reply_max_age_seconds", int),
-        "delayed_cooldown": ("delayed_reply_cooldown_seconds", int),
-        "delayed_summary": ("delayed_summary_ratio", float),
-        "max_tokens": ("max_tokens", int),
-        "temp": ("temperature", float),
-    }
-    if normalized not in field_map:
-        valid = ", ".join(sorted(field_map.keys()))
+    if normalized not in _RUNTIME_FIELD_MAP:
+        valid = ", ".join(sorted(_RUNTIME_FIELD_MAP.keys()))
         raise ValueError(f"Parámetro desconocido: {key!r}. Válidos: {valid}")
 
-    attr_name, parser = field_map[normalized]
+    attr_name, parser = _RUNTIME_FIELD_MAP[normalized]
     previous_value = getattr(config, attr_name)
     new_value = parser(raw_value)
     setattr(config, attr_name, new_value)
@@ -91,22 +99,8 @@ def reset_runtime_config(config: BotConfig) -> str:
             overrides_path=config.overrides_path,
             env_path=config.env_path,
         )
-        for attr in (
-            "direct_reply_enabled",
-            "random_reply_probability",
-            "summary_intervention_ratio",
-            "group_cooldown_seconds",
-            "delayed_reply_enabled",
-            "delayed_reply_probability",
-            "delayed_reply_check_interval_seconds",
-            "delayed_reply_min_age_seconds",
-            "delayed_reply_max_age_seconds",
-            "delayed_reply_cooldown_seconds",
-            "delayed_summary_ratio",
-            "max_tokens",
-            "temperature",
-        ):
-            setattr(config, attr, getattr(fresh, attr))
+        for attr_name, _ in _RUNTIME_FIELD_MAP.values():
+            setattr(config, attr_name, getattr(fresh, attr_name))
 
     return "Overrides en caliente eliminados; configuración restaurada desde .env."
 
@@ -125,9 +119,14 @@ def format_runtime_config(config: BotConfig) -> str:
         f"- delayed_max_age: {config.delayed_reply_max_age_seconds}s\n"
         f"- delayed_cooldown: {config.delayed_reply_cooldown_seconds}s\n"
         f"- delayed_summary: {config.delayed_summary_ratio}\n"
+        f"- tts: {config.tts_enabled}\n"
+        f"- voice: {config.voice_reply_probability}\n"
+        f"- delayed_voice: {config.delayed_voice_probability}\n"
+        f"- tts_max_chars: {config.tts_max_chars}\n"
+        f"- tts_caption: {config.tts_send_text_caption}\n"
         f"- max_tokens: {config.max_tokens}\n"
         f"- temp: {config.temperature}\n\n"
-        "Uso: /config <parametro> <valor>"
+        "Uso: /config <parametro> <valor> | /config reset"
     )
 
 
@@ -153,18 +152,20 @@ def read_termux_battery() -> str | None:
 
 
 class BotController:
-    """Orquesta comandos, mensajes entrantes y el ciclo diferido en segundo plano."""
+    """Orquesta comandos, mensajes entrantes, voz (bark.cpp) y el ciclo diferido."""
 
     def __init__(
         self,
         config: BotConfig,
         store: GroupContextStore,
         llm_client: LlamaClient,
+        tts_client: BarkCppTTS | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.config = config
         self.store = store
         self.llm = llm_client
+        self.tts = tts_client
         self.rng = rng or random.Random()
         self.busy_semaphore = asyncio.Semaphore(1)
 
@@ -172,6 +173,54 @@ class BotController:
         if self.config.admin_user_id is None:
             return True
         return user_id == self.config.admin_user_id
+
+    def _should_use_voice(self, intervention: InterventionType) -> bool:
+        if self.tts is None or not self.tts.is_available():
+            return False
+        if intervention in (
+            InterventionType.DELAYED_PAST_REPLY,
+            InterventionType.DELAYED_GROUP_SUMMARY,
+        ):
+            prob = self.config.delayed_voice_probability
+        else:
+            prob = self.config.voice_reply_probability
+        if prob <= 0.0:
+            return False
+        return self.rng.random() < prob
+
+    async def _deliver_response(
+        self,
+        *,
+        bot: Any,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None,
+        use_voice: bool,
+        msg_obj: Any | None = None,
+    ) -> Any:
+        if use_voice and self.tts is not None:
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action="record_voice")
+                ogg_bytes = await self.tts.synthesize_ogg(text)
+                caption = text[:1000] if self.config.tts_send_text_caption else None
+                return await bot.send_voice(
+                    chat_id=chat_id,
+                    voice=ogg_bytes,
+                    reply_to_message_id=reply_to_message_id,
+                    caption=caption,
+                )
+            except Exception as exc:
+                logger.warning("Fallo en bark.cpp TTS (fallback a texto): %s", exc)
+
+        if reply_to_message_id is not None and msg_obj is not None:
+            return await msg_obj.reply_text(text)
+        if reply_to_message_id is not None:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_to_message_id=reply_to_message_id,
+            )
+        return await bot.send_message(chat_id=chat_id, text=text)
 
     async def cmd_id(self, update: Any, context: Any) -> None:
         msg = update.effective_message
@@ -199,10 +248,16 @@ class BotController:
             return
         ok, latency_ms = await self.llm.check_health()
         llm_state = f"OK ({latency_ms:.0f} ms)" if ok else "NO DISPONIBLE"
+        tts_state = (
+            "OK (bark.cpp)"
+            if (self.tts is not None and self.tts.is_available())
+            else "NO DISPONIBLE / DESACTIVADO"
+        )
         battery = read_termux_battery() or "No disponible (fuera de Termux:API)"
         text = (
             f"Estado del servicio:\n"
             f"- llama-server: {llm_state}\n"
+            f"- Voz (bark.cpp): {tts_state}\n"
             f"- Motor ocupado: {'Sí' if self.busy_semaphore.locked() else 'No'}\n"
             f"- Chats en memoria: {len(self.store.active_chat_ids())} "
             f"(grupos: {len(self.store.group_chat_ids())})\n"
@@ -210,7 +265,9 @@ class BotController:
             f"- Prob. aleatoria: {self.config.random_reply_probability} "
             f"(resumen: {self.config.summary_intervention_ratio})\n"
             f"- Diferido activo: {self.config.delayed_reply_enabled} "
-            f"(prob: {self.config.delayed_reply_probability})"
+            f"(prob: {self.config.delayed_reply_probability})\n"
+            f"- Prob. voz: {self.config.voice_reply_probability} "
+            f"(diferida: {self.config.delayed_voice_probability})"
         )
         await msg.reply_text(text)
 
@@ -234,6 +291,64 @@ class BotController:
             await msg.reply_text(summary)
         except Exception as exc:
             await msg.reply_text(f"Error de configuración: {exc}")
+
+    async def cmd_voz(self, update: Any, context: Any) -> None:
+        """Sintetiza un texto directo (/voz hola) o responde por voz al mensaje citado."""
+        msg = update.effective_message
+        chat = update.effective_chat
+        if not msg or not chat:
+            return
+        if not is_chat_allowed(chat.id, self.config.allowed_chat_ids):
+            return
+        if self.tts is None or not self.tts.is_available():
+            await msg.reply_text("Síntesis de voz (bark.cpp) no disponible o desactivada.")
+            return
+
+        args = getattr(context, "args", None) or []
+        direct_text = " ".join(args).strip()
+        reply_to = getattr(msg, "reply_to_message", None)
+        quoted_text = (getattr(reply_to, "text", None) or "").strip() if reply_to else ""
+
+        if not direct_text and not quoted_text:
+            await msg.reply_text("Uso: /voz <texto> o responde a un mensaje con /voz")
+            return
+
+        if self.busy_semaphore.locked():
+            if self.config.notify_when_busy:
+                await msg.reply_text("Motor ocupado, inténtalo en unos segundos.")
+            return
+
+        async with self.busy_semaphore:
+            if direct_text:
+                text_to_speak = direct_text
+            else:
+                await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+                recent = self.store.get_recent_messages(chat.id, self.config.prompt_context_messages)
+                try:
+                    text_to_speak = await self.llm.generate(
+                        intervention=InterventionType.DIRECT_REPLY,
+                        context_messages=recent,
+                    )
+                except Exception as exc:
+                    logger.warning("Error consultando LLM en /voz: %s", exc)
+                    return
+
+            if not text_to_speak:
+                return
+
+            try:
+                await context.bot.send_chat_action(chat_id=chat.id, action="record_voice")
+                ogg_bytes = await self.tts.synthesize_ogg(text_to_speak)
+                caption = text_to_speak[:1000] if self.config.tts_send_text_caption else None
+                await context.bot.send_voice(
+                    chat_id=chat.id,
+                    voice=ogg_bytes,
+                    reply_to_message_id=msg.message_id,
+                    caption=caption,
+                )
+            except Exception as exc:
+                logger.warning("Error generando nota de voz en /voz: %s", exc)
+                await msg.reply_text("No se pudo generar el audio en este momento.")
 
     async def handle_message(self, update: Any, context: Any) -> None:
         msg = update.effective_message
@@ -303,10 +418,17 @@ class BotController:
             if not reply:
                 return
 
-            if intervention == InterventionType.RANDOM_GROUP_SUMMARY:
-                sent = await context.bot.send_message(chat_id=chat_id, text=reply)
-            else:
-                sent = await msg.reply_text(reply)
+            use_voice = self._should_use_voice(intervention)
+            is_summary = intervention == InterventionType.RANDOM_GROUP_SUMMARY
+            sent = await self._deliver_response(
+                bot=context.bot,
+                chat_id=chat_id,
+                text=reply,
+                reply_to_message_id=None if is_summary else msg.message_id,
+                use_voice=use_voice,
+                msg_obj=None if is_summary else msg,
+            )
+            if not is_summary:
                 self.store.mark_replied(chat_id, stored.message_id)
 
             self.store.record_intervention(chat_id)
@@ -359,16 +481,23 @@ class BotController:
             if not reply:
                 return False
 
+            use_voice = self._should_use_voice(intervention)
+            reply_to_id = (
+                target_msg.message_id
+                if (intervention == InterventionType.DELAYED_PAST_REPLY and target_msg is not None)
+                else None
+            )
+
             try:
-                if intervention == InterventionType.DELAYED_PAST_REPLY and target_msg is not None:
-                    sent = await bot.send_message(
-                        chat_id=chat_id,
-                        text=reply,
-                        reply_to_message_id=target_msg.message_id,
-                    )
-                    self.store.mark_replied(chat_id, target_msg.message_id)
-                else:
-                    sent = await bot.send_message(chat_id=chat_id, text=reply)
+                sent = await self._deliver_response(
+                    bot=bot,
+                    chat_id=chat_id,
+                    text=reply,
+                    reply_to_message_id=reply_to_id,
+                    use_voice=use_voice,
+                )
+                if reply_to_id is not None:
+                    self.store.mark_replied(chat_id, reply_to_id)
             except Exception as exc:
                 logger.warning("No se pudo enviar respuesta diferida en chat %s: %s", chat_id, exc)
                 return False

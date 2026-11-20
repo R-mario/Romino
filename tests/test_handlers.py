@@ -362,8 +362,7 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
             chat_id=5099546, chat_type="private", user_id=5099546, user_name="Romino", msg_id=1, text="/start"
         )
         await controller.cmd_start(u, SimpleNamespace(bot=_FakeBot(), args=[]))
-        self.assertEqual(len(m.replies), 1)
-        self.assertIn("/voz", m.replies[0])
+        self.assertEqual(m.replies, ["Yo soy Romino Empeños"])
 
 
 if __name__ == "__main__":

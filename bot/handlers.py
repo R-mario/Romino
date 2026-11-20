@@ -229,15 +229,7 @@ class BotController:
             return
         if not is_chat_allowed(chat.id, self.config.allowed_chat_ids):
             return
-        await msg.reply_text(
-            "¡Hola! Soy Romino corriendo en local en el OnePlus 6T.\n"
-            "Escríbeme cualquier mensaje o usa:\n"
-            "- /id : ver ID de este chat\n"
-            "- /voz <texto> : generar nota de voz con Suno Bark\n"
-            "- /reset : limpiar memoria del chat\n"
-            "- /status : estado del LLM, voz y batería (admin)\n"
-            "- /config : ajustar probabilidades y modos en caliente (admin)"
-        )
+        await msg.reply_text("Yo soy Romino Empeños")
 
     async def cmd_id(self, update: Any, context: Any) -> None:
         msg = update.effective_message

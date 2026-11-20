@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 import random
+import re
 
 from bot.config import BotConfig
 from bot.context import GroupContextStore, StoredMessage
@@ -21,10 +22,13 @@ def is_chat_allowed(chat_id: int, allowed_chat_ids: set[int]) -> bool:
 
 
 def contains_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    """Detecta palabras clave por límites de palabra para evitar falsos positivos (p. ej. 'ia' en 'día')."""
     if not keywords:
         return False
-    lowered = text.lower()
-    return any(kw in lowered for kw in keywords)
+    for kw in keywords:
+        if re.search(rf"(?<!\w){re.escape(kw)}(?!\w)", text, re.IGNORECASE):
+            return True
+    return False
 
 
 def decide_live_intervention(

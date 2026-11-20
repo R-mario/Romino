@@ -142,7 +142,7 @@ class BotConfig:
 
     # Síntesis de voz local (bark.cpp GGML bajo demanda)
     tts_enabled: bool = True
-    bark_bin: str = "~/bark.cpp/build/examples/main/main"
+    bark_bin: str = "~/bin/bark-main"
     bark_model_path: str = "~/models/bark-small_weights-q4_0.bin"
     bark_threads: int = 4
     bark_timeout_seconds: float = 180.0
@@ -151,9 +151,10 @@ class BotConfig:
     tts_max_chars: int = 140
     tts_send_text_caption: bool = False
 
-    # Persistencia de ajustes en caliente (/config)
+    # Persistencia de estado y ajustes en caliente (/config)
     overrides_path: Path | None = None
     env_path: Path | None = None
+    context_state_path: Path | None = None
 
     def validate(self) -> None:
         if not self.telegram_bot_token.strip():
@@ -220,6 +221,7 @@ class BotConfig:
         *,
         overrides_path: Path | None = None,
         env_path: Path | None = None,
+        context_state_path: Path | None = None,
     ) -> BotConfig:
         def get(key: str, default: str = "") -> str:
             return env.get(key, default).strip()
@@ -271,6 +273,7 @@ class BotConfig:
             tts_send_text_caption=_parse_bool(get("TTS_SEND_TEXT_CAPTION"), False),
             overrides_path=overrides_path,
             env_path=env_path,
+            context_state_path=context_state_path,
         )
         cfg.validate()
         return cfg
@@ -280,9 +283,11 @@ class BotConfig:
         cls,
         env_path: Path | None = None,
         overrides_path: Path | None = None,
+        context_state_path: Path | None = None,
     ) -> BotConfig:
         target_env = env_path or Path(".env")
         target_overrides = overrides_path or (target_env.parent / "runtime_overrides.json")
+        target_state = context_state_path or (target_env.parent / "context_state.json")
         merged: dict[str, str] = {}
         merged.update(parse_env_file(target_env))
         merged.update(os.environ)
@@ -290,6 +295,7 @@ class BotConfig:
             merged,
             overrides_path=target_overrides,
             env_path=target_env,
+            context_state_path=target_state,
         )
         persisted = load_runtime_overrides(target_overrides)
         if persisted:

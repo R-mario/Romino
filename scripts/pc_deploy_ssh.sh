@@ -32,6 +32,7 @@ rsync -avz --delete \
   --exclude '.git/' \
   --exclude '.env' \
   --exclude 'runtime_overrides.json' \
+  --exclude 'context_state.json' \
   --exclude 'downloads/' \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
@@ -39,6 +40,14 @@ rsync -avz --delete \
   --exclude '.venv-bot/' \
   --exclude '*.pyc' \
   "$REPO_DIR/" "${TARGET_HOST}:${REMOTE_DIR}/"
+
+if [ -f "$REPO_DIR/downloads/qwen2.5-0.5b-instruct-q4_0.gguf" ]; then
+  echo "Copiando modelo pre-descargado Qwen2.5-0.5B (Q4_0) a ~/models/ en el OnePlus 2..."
+  ssh -p "$SSH_PORT" "$TARGET_HOST" "mkdir -p ~/models"
+  rsync -avz -e "ssh -p $SSH_PORT" \
+    "$REPO_DIR/downloads/qwen2.5-0.5b-instruct-q4_0.gguf" \
+    "${TARGET_HOST}:~/models/qwen2.5-0.5b-instruct-q4_0.gguf"
+fi
 
 case "$ACTION" in
   sync)

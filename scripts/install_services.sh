@@ -8,7 +8,7 @@ set -euo pipefail
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 REPO_DIR="${REPO_DIR:-$HOME/oneplus2-llm-bot}"
-LLAMA_BIN="${LLAMA_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
+LLAMA_BIN="${LLAMA_BIN:-$HOME/bin/llama-server}"
 MODEL_FILE="${MODEL_FILE:-$HOME/models/qwen2.5-0.5b-instruct-q4_0.gguf}"
 VENV_PYTHON="${VENV_PYTHON:-$HOME/.venv-bot/bin/python}"
 SV_DIR="$PREFIX/var/service"

@@ -71,6 +71,38 @@ class TestTriggers(unittest.TestCase):
             result = decide_live_intervention(config=cfg, store=store, **kwargs)
             self.assertEqual(result, InterventionType.DIRECT_REPLY)
 
+    def test_keyword_word_boundaries_prevent_false_positives(self) -> None:
+        cfg = self._base_config()
+        cfg.keywords = ("ia", "romino")
+        cfg.random_reply_probability = 0.0
+        store = GroupContextStore()
+
+        # No debe dispararse en palabras que contienen 'ia' como subcadena
+        for benign in ("buenos días", "había mucha gente", "gracias familia", "qué historia"):
+            res = decide_live_intervention(
+                config=cfg,
+                store=store,
+                chat_id=-1001,
+                text=benign,
+                is_private=False,
+                is_mentioned=False,
+                is_reply_to_bot=False,
+            )
+            self.assertEqual(res, InterventionType.NONE, f"Falso positivo con: {benign}")
+
+        # Sí debe dispararse con palabra completa 'IA' o 'Romino'
+        for trigger in ("qué opinas de la IA?", "IA dime algo", "ey Romino!", "romino ven"):
+            res = decide_live_intervention(
+                config=cfg,
+                store=store,
+                chat_id=-1001,
+                text=trigger,
+                is_private=False,
+                is_mentioned=False,
+                is_reply_to_bot=False,
+            )
+            self.assertEqual(res, InterventionType.DIRECT_REPLY, f"No disparó con: {trigger}")
+
     def test_random_live_summary_vs_direct(self) -> None:
         cfg = self._base_config()
         store = GroupContextStore()

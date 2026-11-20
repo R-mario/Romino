@@ -188,6 +188,14 @@ def main() -> int:
         "Magisk (opcional root/ACC)": download_github_asset(
             "topjohnwu/Magisk", r"^Magisk-v.*\.apk$", rename_ext=".zip"
         ),
+        "ACC (control de carga Magisk)": download_github_asset(
+            "VR-25/acc", r"^acc_.*\.zip$"
+        ),
+        "Modelo Qwen2.5-0.5B-Instruct (Q4_0)": _download_file(
+            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf",
+            DL_DIR / "qwen2.5-0.5b-instruct-q4_0.gguf",
+            min_bytes=200_000_000,
+        ),
         "TWRP oneplus2": download_twrp(),
         "LineageOS 17.1 oneplus2": download_lineageos_17_1(),
     }

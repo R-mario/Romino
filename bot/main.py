@@ -25,6 +25,7 @@ def build_application(env_path: Path | None = None) -> Any:
     store = GroupContextStore(
         max_messages_per_chat=config.max_context_messages,
         max_message_chars=config.max_message_chars,
+        state_path=config.context_state_path,
     )
     llm_client = LlamaClient(config)
     tts_client = BarkCppTTS(config)

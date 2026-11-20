@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from bot.context import GroupContextStore
 
@@ -61,6 +63,23 @@ class TestGroupContextStore(unittest.TestCase):
         store.reset_chat(-1001)
         self.assertEqual(store.get_recent_messages(-1001, 5), [])
         self.assertTrue(store.can_delayed_reply(-1001, cooldown_seconds=600, now=2500.0))
+
+    def test_persists_messages_and_replied_state_across_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "context_state.json"
+            store1 = GroupContextStore(max_messages_per_chat=10, state_path=state_file)
+            store1.add_message(-1001, 10, "Ana", "Mensaje antes del reinicio", timestamp=1000.0)
+            store1.add_message(-1001, 11, "Luis", "Segundo mensaje", timestamp=1010.0)
+            store1.mark_replied(-1001, 10)
+            store1.record_delayed_reply(-1001, timestamp=1050.0)
+
+            # Simular reinicio del teléfono cargando el mismo archivo
+            store2 = GroupContextStore(max_messages_per_chat=10, state_path=state_file)
+            recent = store2.get_recent_messages(-1001, 5)
+            self.assertEqual([m.message_id for m in recent], [10, 11])
+            self.assertTrue(recent[0].already_replied)
+            self.assertFalse(recent[1].already_replied)
+            self.assertFalse(store2.can_delayed_reply(-1001, cooldown_seconds=600, now=1200.0))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+.env
+runtime_overrides.json
+downloads/*.img
+downloads/*.zip
+downloads/*.apk
+__pycache__/
+*.py[cod]
+.venv/
+.venv-bot/
+.pytest_cache/
+models/
+*.gguf
+*.log

@@ -102,7 +102,9 @@ def download_platform_tools() -> bool:
     )
 
 
-def download_github_asset(repo: str, name_regex: str, rename_ext: str | None = None) -> bool:
+def download_github_asset(
+    repo: str, name_regex: str, rename_ext: str | None = None, min_bytes: int = 100_000
+) -> bool:
     try:
         release = _fetch_json(f"https://api.github.com/repos/{repo}/releases/latest")
     except Exception as exc:
@@ -116,7 +118,9 @@ def download_github_asset(repo: str, name_regex: str, rename_ext: str | None = N
             out_name = name
             if rename_ext and not out_name.endswith(rename_ext):
                 out_name = Path(out_name).with_suffix(rename_ext).name
-            return _download_file(asset["browser_download_url"], DL_DIR / out_name)
+            return _download_file(
+                asset["browser_download_url"], DL_DIR / out_name, min_bytes=min_bytes
+            )
 
     print(f"  [ERR]  No se encontró asset en {repo} que coincida con {name_regex}")
     return False
@@ -189,7 +193,7 @@ def main() -> int:
             "topjohnwu/Magisk", r"^Magisk-v.*\.apk$", rename_ext=".zip"
         ),
         "ACC (control de carga Magisk)": download_github_asset(
-            "VR-25/acc", r"^acc_.*\.zip$"
+            "VR-25/acc", r"^acc_v.*\.zip$", min_bytes=50_000
         ),
         "Modelo Qwen2.5-0.5B-Instruct (Q4_0)": _download_file(
             "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf",

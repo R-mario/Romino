@@ -355,6 +355,16 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(bot.sent_voices), 1)
         self.assertEqual(bot.sent_voices[0]["reply_to_message_id"], 88)
 
+    async def test_cmd_start_responds_with_help(self) -> None:
+        cfg = BotConfig(telegram_bot_token="123:abc")
+        controller = BotController(cfg, GroupContextStore(), _StubLLM())
+        u, m = self._make_update(
+            chat_id=5099546, chat_type="private", user_id=5099546, user_name="Romino", msg_id=1, text="/start"
+        )
+        await controller.cmd_start(u, SimpleNamespace(bot=_FakeBot(), args=[]))
+        self.assertEqual(len(m.replies), 1)
+        self.assertIn("/voz", m.replies[0])
+
 
 if __name__ == "__main__":
     unittest.main()

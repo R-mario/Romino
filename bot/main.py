@@ -17,6 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +66,8 @@ def build_application(env_path: Path | None = None) -> Any:
         .build()
     )
 
+    app.add_handler(CommandHandler("start", controller.cmd_start))
+    app.add_handler(CommandHandler("help", controller.cmd_start))
     app.add_handler(CommandHandler("id", controller.cmd_id))
     app.add_handler(CommandHandler("reset", controller.cmd_reset))
     app.add_handler(CommandHandler("status", controller.cmd_status))

@@ -222,6 +222,23 @@ class BotController:
             )
         return await bot.send_message(chat_id=chat_id, text=text)
 
+    async def cmd_start(self, update: Any, context: Any) -> None:
+        msg = update.effective_message
+        chat = update.effective_chat
+        if not msg or not chat:
+            return
+        if not is_chat_allowed(chat.id, self.config.allowed_chat_ids):
+            return
+        await msg.reply_text(
+            "¡Hola! Soy Romino corriendo en local en el OnePlus 6T.\n"
+            "Escríbeme cualquier mensaje o usa:\n"
+            "- /id : ver ID de este chat\n"
+            "- /voz <texto> : generar nota de voz con Suno Bark\n"
+            "- /reset : limpiar memoria del chat\n"
+            "- /status : estado del LLM, voz y batería (admin)\n"
+            "- /config : ajustar probabilidades y modos en caliente (admin)"
+        )
+
     async def cmd_id(self, update: Any, context: Any) -> None:
         msg = update.effective_message
         chat = update.effective_chat

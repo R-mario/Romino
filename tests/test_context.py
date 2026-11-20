@@ -81,6 +81,35 @@ class TestGroupContextStore(unittest.TestCase):
             self.assertFalse(recent[1].already_replied)
             self.assertFalse(store2.can_delayed_reply(-1001, cooldown_seconds=600, now=1200.0))
 
+    def test_group_memory_persistence_and_jsonl_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "context_state.json"
+            archive_dir = Path(tmp) / "history"
+            store = GroupContextStore(
+                max_messages_per_chat=10,
+                state_path=state_file,
+                archive_dir=archive_dir,
+                memory_max_chars=120,
+            )
+            store.add_message(-1001, 1, "Ana", "Nos encanta el fútbol", timestamp=100.0)
+            store.add_message(-1001, 2, "Luis", "Y los videojuegos retro", timestamp=110.0)
+            self.assertTrue(store.needs_memory_refresh(-1001, every_n_messages=2))
+            store.set_memory(-1001, "Grupo de amigos aficionados al fútbol y videojuegos retro.")
+            self.assertFalse(store.needs_memory_refresh(-1001, every_n_messages=2))
+
+            # El archivo JSONL debe registrar los 2 mensajes
+            jsonl_file = archive_dir / "chat_-1001.jsonl"
+            self.assertTrue(jsonl_file.exists())
+            self.assertEqual(len(jsonl_file.read_text(encoding="utf-8").splitlines()), 2)
+
+            # Reinicio: la memoria persiste y /reset no la borra
+            reloaded = GroupContextStore(max_messages_per_chat=10, state_path=state_file)
+            self.assertIn("videojuegos retro", reloaded.get_memory(-1001))
+            reloaded.reset_chat(-1001)
+            self.assertIn("videojuegos retro", reloaded.get_memory(-1001))
+            reloaded.clear_memory(-1001)
+            self.assertEqual(reloaded.get_memory(-1001), "")
+
 
 if __name__ == "__main__":
     unittest.main()

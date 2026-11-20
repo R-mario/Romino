@@ -22,20 +22,26 @@ class StoredMessage:
 
 
 class GroupContextStore:
-    """Almacena un buffer circular acotado por chat, controla cooldowns y persiste estado ligero."""
+    """Almacena buffer circular por chat, memoria resumida evolutiva, cooldowns y archivo JSONL."""
 
     def __init__(
         self,
         max_messages_per_chat: int = 15,
         max_message_chars: int = 280,
         state_path: Path | None = None,
+        archive_dir: Path | None = None,
+        memory_max_chars: int = 450,
     ) -> None:
         self.max_messages_per_chat = max_messages_per_chat
         self.max_message_chars = max_message_chars
         self.state_path = state_path
+        self.archive_dir = archive_dir
+        self.memory_max_chars = memory_max_chars
         self._messages: dict[int, deque[StoredMessage]] = {}
         self._last_intervention_ts: dict[int, float] = {}
         self._last_delayed_reply_ts: dict[int, float] = {}
+        self._group_memory: dict[int, str] = {}
+        self._messages_since_memory: dict[int, int] = {}
         if self.state_path is not None:
             self._load_state()
 
@@ -67,8 +73,12 @@ class GroupContextStore:
                 self._last_intervention_ts[int(cid_str)] = float(ts)
             for cid_str, ts in raw.get("last_delayed_reply_ts", {}).items():
                 self._last_delayed_reply_ts[int(cid_str)] = float(ts)
+            for cid_str, mem in raw.get("group_memory", {}).items():
+                if isinstance(mem, str) and mem.strip():
+                    self._group_memory[int(cid_str)] = mem.strip()[: self.memory_max_chars]
+            for cid_str, cnt in raw.get("messages_since_memory", {}).items():
+                self._messages_since_memory[int(cid_str)] = max(0, int(cnt))
         except Exception:
-            # Si el archivo estuviese corrupto tras un corte de luz, arrancamos limpio sin romper el bot
             return
 
     def _save_state(self) -> None:
@@ -85,16 +95,41 @@ class GroupContextStore:
             "last_delayed_reply_ts": {
                 str(cid): ts for cid, ts in self._last_delayed_reply_ts.items()
             },
+            "group_memory": {
+                str(cid): mem for cid, mem in self._group_memory.items() if mem
+            },
+            "messages_since_memory": {
+                str(cid): cnt for cid, cnt in self._messages_since_memory.items() if cnt > 0
+            },
         }
         tmp = self.state_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.state_path)
+
+    def _append_archive(self, stored: StoredMessage) -> None:
+        if self.archive_dir is None:
+            return
+        try:
+            self.archive_dir.mkdir(parents=True, exist_ok=True)
+            log_file = self.archive_dir / f"chat_{stored.chat_id}.jsonl"
+            line = json.dumps(asdict(stored), ensure_ascii=False) + "\n"
+            with log_file.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:
+            return
 
     def _truncate(self, text: str) -> str:
         cleaned = " ".join(text.strip().split())
         if len(cleaned) <= self.max_message_chars:
             return cleaned
         return cleaned[: self.max_message_chars - 1].rstrip() + "…"
+
+    def _normalize_memory(self, text: str, max_chars: int | None = None) -> str:
+        limit = self.memory_max_chars if max_chars is None else max_chars
+        cleaned = " ".join(text.strip().split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 1].rstrip() + "…"
 
     def add_message(
         self,
@@ -116,6 +151,9 @@ class GroupContextStore:
             is_bot=is_bot,
         )
         buf.append(stored)
+        if not is_bot:
+            self._messages_since_memory[chat_id] = self._messages_since_memory.get(chat_id, 0) + 1
+        self._append_archive(stored)
         self._save_state()
         return stored
 
@@ -127,6 +165,46 @@ class GroupContextStore:
 
     def format_recent_context(self, chat_id: int, limit: int) -> str:
         return "\n".join(msg.format_line() for msg in self.get_recent_messages(chat_id, limit))
+
+    def get_memory(self, chat_id: int) -> str:
+        return self._group_memory.get(chat_id, "")
+
+    def messages_since_memory(self, chat_id: int) -> int:
+        return self._messages_since_memory.get(chat_id, 0)
+
+    def set_memory(self, chat_id: int, memory_text: str, max_chars: int | None = None) -> str:
+        normalized = self._normalize_memory(memory_text, max_chars=max_chars)
+        if normalized:
+            self._group_memory[chat_id] = normalized
+        else:
+            self._group_memory.pop(chat_id, None)
+        self._messages_since_memory[chat_id] = 0
+        self._save_state()
+        return normalized
+
+    def append_memory_note(self, chat_id: int, note: str, max_chars: int | None = None) -> str:
+        existing = self.get_memory(chat_id)
+        combined = f"{existing} {note.strip()}".strip() if existing else note.strip()
+        return self.set_memory(chat_id, combined, max_chars=max_chars)
+
+    def clear_memory(self, chat_id: int) -> None:
+        self._group_memory.pop(chat_id, None)
+        self._messages_since_memory[chat_id] = 0
+        self._save_state()
+
+    def needs_memory_refresh(self, chat_id: int, every_n_messages: int) -> bool:
+        if every_n_messages <= 0:
+            return False
+        return self._messages_since_memory.get(chat_id, 0) >= every_n_messages
+
+    def chats_needing_memory_refresh(self, every_n_messages: int) -> list[int]:
+        if every_n_messages <= 0:
+            return []
+        return [
+            cid
+            for cid, cnt in self._messages_since_memory.items()
+            if cnt >= every_n_messages and cid in self._messages
+        ]
 
     def mark_replied(self, chat_id: int, message_id: int) -> None:
         buf = self._messages.get(chat_id)
@@ -203,6 +281,7 @@ class GroupContextStore:
         return buf[start : idx + 1]
 
     def reset_chat(self, chat_id: int) -> None:
+        """Limpia el buffer a corto plazo (conserva la memoria a largo plazo; usa clear_memory para borrarla)."""
         self._messages.pop(chat_id, None)
         self._last_intervention_ts.pop(chat_id, None)
         self._last_delayed_reply_ts.pop(chat_id, None)

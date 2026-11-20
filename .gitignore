@@ -1,6 +1,7 @@
 .env
 runtime_overrides.json
 context_state.json
+history/
 *.tmp
 downloads/*.img
 downloads/*.zip

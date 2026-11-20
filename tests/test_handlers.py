@@ -29,6 +29,10 @@ class _StubLLM:
             await asyncio.sleep(self.delay)
         return self.reply
 
+    async def summarize_memory(self, **kwargs: Any) -> str:
+        self.calls.append({"summarize": True, **kwargs})
+        return "Grupo de amigos hablando de cine y tecnología."
+
 
 class _FakeBot:
     def __init__(self) -> None:
@@ -363,6 +367,43 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         )
         await controller.cmd_start(u, SimpleNamespace(bot=_FakeBot(), args=[]))
         self.assertEqual(m.replies, ["Yo soy Romino Empeños"])
+
+    async def test_cmd_memoria_and_background_refresh(self) -> None:
+        cfg = BotConfig(
+            telegram_bot_token="123:abc",
+            admin_user_id=777,
+            allowed_chat_ids={-1001},
+            memory_enabled=True,
+            memory_update_every_messages=2,
+        )
+        store = GroupContextStore()
+        llm = _StubLLM()
+        controller = BotController(cfg, store, llm)
+        bot = _FakeBot()
+
+        store.add_message(-1001, 1, "Ana", "Vamos al cine", timestamp=100.0)
+        store.add_message(-1001, 2, "Luis", "Mejor hablamos de Linux", timestamp=110.0)
+
+        # Mantenimiento automático actualiza memoria al alcanzar el umbral
+        refreshed = await controller.run_memory_maintenance()
+        self.assertEqual(refreshed, 1)
+        self.assertIn("cine y tecnología", store.get_memory(-1001))
+
+        # /memoria add añade nota manual como admin
+        u_add, m_add = self._make_update(
+            chat_id=-1001, chat_type="supergroup", user_id=777, user_name="Admin", msg_id=3, text="/memoria add Son de Madrid."
+        )
+        await controller.cmd_memoria(u_add, SimpleNamespace(bot=bot, args=["add", "Son", "de", "Madrid."]))
+        self.assertIn("Son de Madrid.", store.get_memory(-1001))
+        self.assertIn("Nota añadida", m_add.replies[0])
+
+        # /memoria clear borra la memoria
+        u_clr, m_clr = self._make_update(
+            chat_id=-1001, chat_type="supergroup", user_id=777, user_name="Admin", msg_id=4, text="/memoria clear"
+        )
+        await controller.cmd_memoria(u_clr, SimpleNamespace(bot=bot, args=["clear"]))
+        self.assertEqual(store.get_memory(-1001), "")
+        self.assertIn("borrada", m_clr.replies[0])
 
 
 if __name__ == "__main__":

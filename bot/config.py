@@ -151,10 +151,15 @@ class BotConfig:
     tts_max_chars: int = 140
     tts_send_text_caption: bool = False
 
-    # Persistencia de estado y ajustes en caliente (/config)
+    # Persistencia de estado, historial y ajustes en caliente (/config)
+    memory_enabled: bool = True
+    memory_update_every_messages: int = 20
+    memory_max_chars: int = 450
+    archive_chats_jsonl: bool = True
     overrides_path: Path | None = None
     env_path: Path | None = None
     context_state_path: Path | None = None
+    archive_dir: Path | None = None
 
     def validate(self) -> None:
         if not self.telegram_bot_token.strip():
@@ -187,6 +192,10 @@ class BotConfig:
             raise ValueError("BARK_TIMEOUT_SECONDS debe ser mayor que 0.")
         if self.tts_max_chars < 20:
             raise ValueError("TTS_MAX_CHARS debe ser al menos 20.")
+        if self.memory_update_every_messages < 2:
+            raise ValueError("MEMORY_UPDATE_EVERY_MESSAGES debe ser al menos 2.")
+        if self.memory_max_chars < 80:
+            raise ValueError("MEMORY_MAX_CHARS debe ser al menos 80.")
 
         _validate_non_negative("GROUP_COOLDOWN_SECONDS", self.group_cooldown_seconds)
         _validate_non_negative("DELAYED_REPLY_MIN_AGE_SECONDS", self.delayed_reply_min_age_seconds)
@@ -203,8 +212,9 @@ class BotConfig:
     def apply_overrides_dict(self, overrides: Mapping[str, Any]) -> None:
         """Aplica overrides persistidos previamente tras validar su coherencia."""
         backup: dict[str, Any] = {}
+        protected = {"telegram_bot_token", "overrides_path", "env_path", "context_state_path", "archive_dir"}
         for attr, val in overrides.items():
-            if hasattr(self, attr) and attr not in {"telegram_bot_token", "overrides_path", "env_path"}:
+            if hasattr(self, attr) and attr not in protected:
                 backup[attr] = getattr(self, attr)
                 setattr(self, attr, val)
         try:
@@ -222,6 +232,7 @@ class BotConfig:
         overrides_path: Path | None = None,
         env_path: Path | None = None,
         context_state_path: Path | None = None,
+        archive_dir: Path | None = None,
     ) -> BotConfig:
         def get(key: str, default: str = "") -> str:
             return env.get(key, default).strip()
@@ -271,9 +282,14 @@ class BotConfig:
             delayed_voice_probability=float(get("DELAYED_VOICE_PROBABILITY", "0.35")),
             tts_max_chars=int(get("TTS_MAX_CHARS", "140")),
             tts_send_text_caption=_parse_bool(get("TTS_SEND_TEXT_CAPTION"), False),
+            memory_enabled=_parse_bool(get("MEMORY_ENABLED"), True),
+            memory_update_every_messages=int(get("MEMORY_UPDATE_EVERY_MESSAGES", "20")),
+            memory_max_chars=int(get("MEMORY_MAX_CHARS", "450")),
+            archive_chats_jsonl=_parse_bool(get("ARCHIVE_CHATS_JSONL"), True),
             overrides_path=overrides_path,
             env_path=env_path,
             context_state_path=context_state_path,
+            archive_dir=archive_dir,
         )
         cfg.validate()
         return cfg
@@ -284,10 +300,12 @@ class BotConfig:
         env_path: Path | None = None,
         overrides_path: Path | None = None,
         context_state_path: Path | None = None,
+        archive_dir: Path | None = None,
     ) -> BotConfig:
         target_env = env_path or Path(".env")
         target_overrides = overrides_path or (target_env.parent / "runtime_overrides.json")
         target_state = context_state_path or (target_env.parent / "context_state.json")
+        target_archive = archive_dir or (target_env.parent / "history")
         merged: dict[str, str] = {}
         merged.update(parse_env_file(target_env))
         merged.update(os.environ)
@@ -296,6 +314,7 @@ class BotConfig:
             overrides_path=target_overrides,
             env_path=target_env,
             context_state_path=target_state,
+            archive_dir=target_archive,
         )
         persisted = load_runtime_overrides(target_overrides)
         if persisted:

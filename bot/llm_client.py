@@ -26,29 +26,57 @@ def build_chat_messages(
     intervention: InterventionType,
     context_messages: Sequence[StoredMessage],
     target_message: StoredMessage | None = None,
+    group_memory: str = "",
 ) -> list[dict[str, str]]:
-    """Construye el payload de mensajes con system prompt fijo para maximizar KV-cache."""
+    """Construye el payload con system prompt fijo (KV-cache) y memoria opcional del grupo."""
     conversation = "\n".join(m.format_line() for m in context_messages)
+    memory_prefix = f"Memoria del grupo:\n{group_memory.strip()}\n\n" if group_memory.strip() else ""
 
     if intervention in (InterventionType.RANDOM_GROUP_SUMMARY, InterventionType.DELAYED_GROUP_SUMMARY):
         user_content = (
+            f"{memory_prefix}"
             f"Conversación reciente del grupo:\n{conversation}\n\n"
             f"Instrucción: {config.summary_intervention_instruction}"
         )
     elif intervention == InterventionType.DELAYED_PAST_REPLY and target_message is not None:
         user_content = (
+            f"{memory_prefix}"
             f"Contexto previo del grupo:\n{conversation}\n\n"
             f"Mensaje anterior al que vas a responder ahora:\n{target_message.format_line()}\n\n"
             f"Instrucción: {config.delayed_reply_instruction}"
         )
     else:
         user_content = (
+            f"{memory_prefix}"
             f"Conversación reciente:\n{conversation}\n\n"
             "Responde directamente y de forma breve al último mensaje."
         )
 
     return [
         {"role": "system", "content": config.system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def build_memory_update_messages(
+    *,
+    existing_memory: str,
+    recent_messages: Sequence[StoredMessage],
+) -> list[dict[str, str]]:
+    """Construye prompt compacto para condensar la memoria evolutiva de un grupo en 2-4 frases."""
+    conversation = "\n".join(m.format_line() for m in recent_messages)
+    prev = existing_memory.strip() or "(sin memoria previa)"
+    user_content = (
+        f"Memoria previa del grupo:\n{prev}\n\n"
+        f"Mensajes recientes:\n{conversation}\n\n"
+        "Actualiza la memoria del grupo en un único párrafo muy breve (máximo 3 frases en español) "
+        "conservando nombres, temas recurrentes o datos útiles y descartando relleno."
+    )
+    return [
+        {
+            "role": "system",
+            "content": "Resumes conversaciones de grupos de Telegram en español de forma muy concisa y factual.",
+        },
         {"role": "user", "content": user_content},
     ]
 
@@ -96,12 +124,14 @@ class LlamaClient:
         intervention: InterventionType,
         context_messages: Sequence[StoredMessage],
         target_message: StoredMessage | None = None,
+        group_memory: str = "",
     ) -> str:
         messages = build_chat_messages(
             config=self.config,
             intervention=intervention,
             context_messages=context_messages,
             target_message=target_message,
+            group_memory=group_memory,
         )
         payload = {
             "messages": messages,
@@ -110,6 +140,34 @@ class LlamaClient:
             "top_p": self.config.top_p,
             "repeat_penalty": self.config.repeat_penalty,
             "cache_prompt": True,
+        }
+        resp = await self._get_client().post("/v1/chat/completions", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        raw_content = choices[0].get("message", {}).get("content", "")
+        return clean_reply(raw_content)
+
+    async def summarize_memory(
+        self,
+        *,
+        existing_memory: str,
+        recent_messages: Sequence[StoredMessage],
+    ) -> str:
+        """Condensa la memoria evolutiva de un grupo con baja temperatura para estabilidad."""
+        messages = build_memory_update_messages(
+            existing_memory=existing_memory,
+            recent_messages=recent_messages,
+        )
+        payload = {
+            "messages": messages,
+            "max_tokens": 110,
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1,
+            "cache_prompt": False,
         }
         resp = await self._get_client().post("/v1/chat/completions", json=payload)
         resp.raise_for_status()

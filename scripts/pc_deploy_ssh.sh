@@ -33,6 +33,7 @@ rsync -avz --delete \
   --exclude '.env' \
   --exclude 'runtime_overrides.json' \
   --exclude 'context_state.json' \
+  --exclude 'history/' \
   --exclude 'downloads/' \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \

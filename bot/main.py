@@ -27,6 +27,8 @@ def build_application(env_path: Path | None = None) -> Any:
         max_messages_per_chat=config.max_context_messages,
         max_message_chars=config.max_message_chars,
         state_path=config.context_state_path,
+        archive_dir=config.archive_dir if config.archive_chats_jsonl else None,
+        memory_max_chars=config.memory_max_chars,
     )
     llm_client = LlamaClient(config)
     tts_client = BarkCppTTS(config)
@@ -72,6 +74,7 @@ def build_application(env_path: Path | None = None) -> Any:
     app.add_handler(CommandHandler("reset", controller.cmd_reset))
     app.add_handler(CommandHandler("status", controller.cmd_status))
     app.add_handler(CommandHandler("config", controller.cmd_config))
+    app.add_handler(CommandHandler("memoria", controller.cmd_memoria))
     app.add_handler(CommandHandler("voz", controller.cmd_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, controller.handle_message))
     return app

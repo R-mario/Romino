@@ -55,6 +55,9 @@ _RUNTIME_FIELD_MAP: dict[str, tuple[str, Any]] = {
     "delayed_voice": ("delayed_voice_probability", float),
     "tts_max_chars": ("tts_max_chars", int),
     "tts_caption": ("tts_send_text_caption", _parse_bool_arg),
+    "memory": ("memory_enabled", _parse_bool_arg),
+    "memory_every": ("memory_update_every_messages", int),
+    "memory_max_chars": ("memory_max_chars", int),
 }
 
 
@@ -124,6 +127,7 @@ def format_runtime_config(config: BotConfig) -> str:
         f"- delayed_voice: {config.delayed_voice_probability}\n"
         f"- tts_max_chars: {config.tts_max_chars}\n"
         f"- tts_caption: {config.tts_send_text_caption}\n"
+        f"- memory: {config.memory_enabled} (cada {config.memory_update_every_messages} msgs, max {config.memory_max_chars} chars)\n"
         f"- max_tokens: {config.max_tokens}\n"
         f"- temp: {config.temperature}\n\n"
         "Uso: /config <parametro> <valor> | /config reset"
@@ -301,6 +305,98 @@ class BotController:
         except Exception as exc:
             await msg.reply_text(f"Error de configuración: {exc}")
 
+    async def refresh_chat_memory(self, chat_id: int, *, force: bool = False) -> str | None:
+        """Actualiza la memoria resumida de un chat con el LLM si el motor está libre."""
+        if not force and not self.config.memory_enabled:
+            return None
+        if not force and not self.store.needs_memory_refresh(
+            chat_id, self.config.memory_update_every_messages
+        ):
+            return None
+        recent = self.store.get_recent_messages(chat_id, self.config.max_context_messages)
+        if not recent:
+            return None
+        if self.busy_semaphore.locked():
+            return None
+
+        async with self.busy_semaphore:
+            existing = self.store.get_memory(chat_id)
+            try:
+                updated = await self.llm.summarize_memory(
+                    existing_memory=existing,
+                    recent_messages=recent,
+                )
+            except Exception as exc:
+                logger.warning("Error actualizando memoria de chat %s: %s", chat_id, exc)
+                return None
+            if not updated:
+                return None
+            return self.store.set_memory(
+                chat_id, updated, max_chars=self.config.memory_max_chars
+            )
+
+    async def run_memory_maintenance(self) -> int:
+        """Refresca en segundo plano hasta 1 chat que supere el umbral de mensajes nuevos."""
+        if not self.config.memory_enabled or self.busy_semaphore.locked():
+            return 0
+        pending = [
+            cid
+            for cid in self.store.chats_needing_memory_refresh(
+                self.config.memory_update_every_messages
+            )
+            if is_chat_allowed(cid, self.config.allowed_chat_ids)
+        ]
+        if not pending:
+            return 0
+        res = await self.refresh_chat_memory(pending[0], force=False)
+        return 1 if res is not None else 0
+
+    async def cmd_memoria(self, update: Any, context: Any) -> None:
+        """Consulta o edita la memoria evolutiva de este chat (solo administrador)."""
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        if not msg or not chat or not self._is_admin(user.id if user else None):
+            return
+
+        args = getattr(context, "args", None) or []
+        if not args:
+            current = self.store.get_memory(chat.id) or "(vacía todavía)"
+            count = self.store.messages_since_memory(chat.id)
+            await msg.reply_text(
+                f"Memoria actual de este chat ({count}/{self.config.memory_update_every_messages} msgs para auto-resumen):\n"
+                f"{current}\n\n"
+                "Uso: /memoria [set <texto> | add <nota> | refresh | clear]"
+            )
+            return
+
+        sub = args[0].strip().lower()
+        rest = " ".join(args[1:]).strip()
+
+        if sub == "clear":
+            self.store.clear_memory(chat.id)
+            await msg.reply_text("Memoria a largo plazo de este chat borrada.")
+        elif sub == "set" and rest:
+            saved = self.store.set_memory(chat.id, rest, max_chars=self.config.memory_max_chars)
+            await msg.reply_text(f"Memoria actualizada:\n{saved}")
+        elif sub == "add" and rest:
+            saved = self.store.append_memory_note(
+                chat.id, rest, max_chars=self.config.memory_max_chars
+            )
+            await msg.reply_text(f"Nota añadida a la memoria:\n{saved}")
+        elif sub == "refresh":
+            if self.busy_semaphore.locked():
+                await msg.reply_text("Motor ocupado, inténtalo en unos segundos.")
+                return
+            await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+            saved = await self.refresh_chat_memory(chat.id, force=True)
+            if saved:
+                await msg.reply_text(f"Memoria regenerada:\n{saved}")
+            else:
+                await msg.reply_text("No hay mensajes suficientes o falló el resumen.")
+        else:
+            await msg.reply_text("Uso: /memoria [set <texto> | add <nota> | refresh | clear]")
+
     async def cmd_voz(self, update: Any, context: Any) -> None:
         """Sintetiza un texto directo (/voz hola) o responde por voz al mensaje citado."""
         msg = update.effective_message
@@ -337,6 +433,7 @@ class BotController:
                     text_to_speak = await self.llm.generate(
                         intervention=InterventionType.DIRECT_REPLY,
                         context_messages=recent,
+                        group_memory=self.store.get_memory(chat.id) if self.config.memory_enabled else "",
                     )
                 except Exception as exc:
                     logger.warning("Error consultando LLM en /voz: %s", exc)
@@ -403,6 +500,10 @@ class BotController:
             rng=self.rng,
         )
         if intervention == InterventionType.NONE:
+            if self.config.memory_enabled and self.store.needs_memory_refresh(
+                chat_id, self.config.memory_update_every_messages
+            ):
+                asyncio.create_task(self.refresh_chat_memory(chat_id, force=False))
             return
 
         if self.busy_semaphore.locked():
@@ -413,10 +514,12 @@ class BotController:
         async with self.busy_semaphore:
             await context.bot.send_chat_action(chat_id=chat_id, action="typing")
             recent = self.store.get_recent_messages(chat_id, self.config.prompt_context_messages)
+            group_memory = self.store.get_memory(chat_id) if self.config.memory_enabled else ""
             try:
                 reply = await self.llm.generate(
                     intervention=intervention,
                     context_messages=recent,
+                    group_memory=group_memory,
                 )
             except Exception as exc:
                 logger.warning("Error consultando llama-server: %s", exc)
@@ -478,10 +581,12 @@ class BotController:
 
             try:
                 await bot.send_chat_action(chat_id=chat_id, action="typing")
+                group_memory = self.store.get_memory(chat_id) if self.config.memory_enabled else ""
                 reply = await self.llm.generate(
                     intervention=intervention,
                     context_messages=ctx_messages,
                     target_message=target_msg,
+                    group_memory=group_memory,
                 )
             except Exception as exc:
                 logger.warning("Error en intervención diferida (chat %s): %s", chat_id, exc)
@@ -530,6 +635,7 @@ class BotController:
             interval = max(10, self.config.delayed_reply_check_interval_seconds)
             await asyncio.sleep(interval)
             try:
+                await self.run_memory_maintenance()
                 await self.run_delayed_cycle(bot)
             except asyncio.CancelledError:
                 raise

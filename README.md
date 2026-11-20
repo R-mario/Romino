@@ -96,6 +96,7 @@ sv-enable telegram-bot && sv up telegram-bot
 | `/reset` | Grupos autorizados | Borra el buffer de memoria del chat actual. |
 | `/status` | Administrador | Comprueba salud y latencia de `llama-server`, disponibilidad de `bark.cpp`, ocupación del motor y temperatura/batería (`Termux:API`). |
 | `/config` | Administrador | Muestra la configuración activa, ajusta parámetros en caliente (persistidos en `runtime_overrides.json` para sobrevivir reinicios) o restaura `.env` con `/config reset`. |
+| `/memoria` | Administrador | Consulta, edita, fuerza resumen o borra la memoria evolutiva de este chat (`/memoria [set <texto> \| add <nota> \| refresh \| clear]`). |
 | `/voz` | Grupos autorizados | Sintetiza audio con **Suno Bark (`bark.cpp` `Q4_0`)** y lo envía como nota de voz Opus (`/voz <texto>` o respondiendo a un mensaje con `/voz`). |
 
 Ejemplos de ajuste en caliente:

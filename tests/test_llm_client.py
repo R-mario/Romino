@@ -66,6 +66,15 @@ class TestLlamaClient(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ana: Qué película vemos?", delayed_msgs[1]["content"])
         self.assertIn(self.config.delayed_reply_instruction, delayed_msgs[1]["content"])
 
+        with_mem = build_chat_messages(
+            config=self.config,
+            intervention=InterventionType.DIRECT_REPLY,
+            context_messages=self.msgs,
+            group_memory="Grupo cinéfilo fan de la ciencia ficción.",
+        )
+        self.assertIn("Memoria del grupo:", with_mem[1]["content"])
+        self.assertIn("ciencia ficción", with_mem[1]["content"])
+
     async def test_health_and_generate(self) -> None:
         fake_http = _FakeHttpClient(
             get_resp=_FakeResponse(200, {"status": "ok"}),

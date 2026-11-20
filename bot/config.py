@@ -123,6 +123,7 @@ class BotConfig:
 
     # Triggers e intervenciones
     direct_reply_enabled: bool = True
+    reply_to_bot_probability: float = 1.0
     keywords: tuple[str, ...] = ()
     group_cooldown_seconds: int = 15
     random_reply_probability: float = 0.05
@@ -179,6 +180,7 @@ class BotConfig:
         if self.temperature <= 0:
             raise ValueError("TEMPERATURE debe ser mayor que 0.")
 
+        _validate_probability("REPLY_TO_BOT_PROBABILITY", self.reply_to_bot_probability)
         _validate_probability("RANDOM_REPLY_PROBABILITY", self.random_reply_probability)
         _validate_probability("SUMMARY_INTERVENTION_RATIO", self.summary_intervention_ratio)
         _validate_probability("DELAYED_REPLY_PROBABILITY", self.delayed_reply_probability)
@@ -259,6 +261,7 @@ class BotConfig:
             prompt_context_messages=int(get("PROMPT_CONTEXT_MESSAGES", "6")),
             max_message_chars=int(get("MAX_MESSAGE_CHARS", "280")),
             direct_reply_enabled=_parse_bool(get("DIRECT_REPLY_ENABLED"), True),
+            reply_to_bot_probability=float(get("REPLY_TO_BOT_PROBABILITY", "1.0")),
             keywords=_parse_keywords(get("KEYWORDS")),
             group_cooldown_seconds=int(get("GROUP_COOLDOWN_SECONDS", "15")),
             random_reply_probability=float(get("RANDOM_REPLY_PROBABILITY", "0.05")),

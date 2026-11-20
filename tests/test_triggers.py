@@ -103,6 +103,38 @@ class TestTriggers(unittest.TestCase):
             )
             self.assertEqual(res, InterventionType.DIRECT_REPLY, f"No disparó con: {trigger}")
 
+    def test_reply_to_bot_respects_specific_probability(self) -> None:
+        cfg = self._base_config()
+        cfg.reply_to_bot_probability = 0.4
+        cfg.random_reply_probability = 1.0  # No debe caer en aleatorio si se citó y no tocó
+        store = GroupContextStore()
+
+        # 0.2 < 0.4 -> responde
+        yes_res = decide_live_intervention(
+            config=cfg,
+            store=store,
+            chat_id=-1001,
+            text="jajaja tal cual",
+            is_private=False,
+            is_mentioned=False,
+            is_reply_to_bot=True,
+            rng=FixedRng([0.2]),
+        )
+        self.assertEqual(yes_res, InterventionType.DIRECT_REPLY)
+
+        # 0.7 >= 0.4 -> ignora (sin caer en random_reply)
+        no_res = decide_live_intervention(
+            config=cfg,
+            store=store,
+            chat_id=-1001,
+            text="jajaja tal cual",
+            is_private=False,
+            is_mentioned=False,
+            is_reply_to_bot=True,
+            rng=FixedRng([0.7]),
+        )
+        self.assertEqual(no_res, InterventionType.NONE)
+
     def test_random_live_summary_vs_direct(self) -> None:
         cfg = self._base_config()
         store = GroupContextStore()

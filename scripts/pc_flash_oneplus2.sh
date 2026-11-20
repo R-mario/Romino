@@ -135,6 +135,16 @@ step_postboot() {
     fi
   done
 
+  local magisk_zip
+  magisk_zip="$(find_one '*Magisk*.zip')"
+  if [ -n "$magisk_zip" ]; then
+    local tmp_apk="/tmp/Magisk-manager.apk"
+    cp "$magisk_zip" "$tmp_apk"
+    echo "Instalando app Magisk Manager ($(basename "$magisk_zip"))..."
+    adb install -r "$tmp_apk" || true
+    rm -f "$tmp_apk"
+  fi
+
   local sdk
   sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r\n')"
   echo "Android SDK detectado en el OnePlus 2: $sdk"

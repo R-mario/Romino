@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 """Parche quirúrgico para bark.cpp:
-Evita rellenar la fase Fine GPT hasta 1024 frames cuando el audio es corto (< 13.6 s),
-usando una ventana dinámica alineada a múltiplos de 32 (ej. 192 frames en vez de 1024).
-Reduce drásticamente la latencia O(N^2) de atención en CPUs ARM sin afectar audios largos (>= 1024).
+1. Ventana dinámica en Fine GPT (evita rellenar a 1024 frames en clips cortos -> 9x más rápido).
+2. Tope adaptativo de n_steps_text_encoder según longitud real del prompt (evita bucles de
+   alucinación de 768 tokens / 15 s que provocaban timeouts de 180 s en frases largas o cortas).
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+OLD_SEMANTIC_STEPS = "    int32_t n_steps_text_encoder = params.n_steps_text_encoder;"
+NEW_SEMANTIC_STEPS = """    // adaptive semantic cap to avoid 768-step hallucination/timeout loops on CPU
+    int real_text_tokens = 0;
+    for (int k = 0; k < 256 && k < (int)input.size(); k++) {
+        if (input[k] != params.text_pad_token) {
+            real_text_tokens++;
+        }
+    }
+    int32_t n_steps_text_encoder = std::min(
+        params.n_steps_text_encoder,
+        std::max(140, real_text_tokens * 22 + 80));"""
 
 OLD_INTERNAL = (
     "    ggml_backend_tensor_get(inpL, logits.data(), 0, sizeof(float) * n_vocab * block_size);"
@@ -148,20 +160,30 @@ NEW_FINE_BLOCK = """    // dynamic window padding for short clips (avoids wasted
 
 def patch_file(path: Path) -> int:
     text = path.read_text(encoding="utf-8")
-    if "dynamic window padding for short clips" in text:
-        print(f"[OK] Parche ya aplicado en {path}")
-        return 0
+    updated = text
+    changed = False
 
-    if OLD_INTERNAL not in text:
-        print(f"[ERR] No se encontró OLD_INTERNAL en {path}", file=sys.stderr)
-        return 1
-    if OLD_FINE_BLOCK not in text:
-        print(f"[ERR] No se encontró OLD_FINE_BLOCK en {path}", file=sys.stderr)
-        return 1
+    if "dynamic window padding for short clips" not in updated:
+        if OLD_INTERNAL not in updated or OLD_FINE_BLOCK not in updated:
+            print(f"[ERR] No se encontraron bloques Fine GPT en {path}", file=sys.stderr)
+            return 1
+        updated = updated.replace(OLD_INTERNAL, NEW_INTERNAL, 1).replace(
+            OLD_FINE_BLOCK, NEW_FINE_BLOCK, 1
+        )
+        changed = True
 
-    updated = text.replace(OLD_INTERNAL, NEW_INTERNAL, 1).replace(OLD_FINE_BLOCK, NEW_FINE_BLOCK, 1)
-    path.write_text(updated, encoding="utf-8")
-    print(f"[PATCHED] Parche dinámico Fine GPT aplicado correctamente en {path}")
+    if "adaptive semantic cap to avoid 768-step" not in updated:
+        if OLD_SEMANTIC_STEPS not in updated:
+            print(f"[ERR] No se encontró OLD_SEMANTIC_STEPS en {path}", file=sys.stderr)
+            return 1
+        updated = updated.replace(OLD_SEMANTIC_STEPS, NEW_SEMANTIC_STEPS, 1)
+        changed = True
+
+    if changed:
+        path.write_text(updated, encoding="utf-8")
+        print(f"[PATCHED] Parches Fine dinámico + tope semántico adaptativo aplicados en {path}")
+    else:
+        print(f"[OK] Todos los parches ya estaban aplicados en {path}")
     return 0
 
 

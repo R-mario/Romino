@@ -55,6 +55,9 @@ _RUNTIME_FIELD_MAP: dict[str, tuple[str, Any]] = {
     "voice": ("voice_reply_probability", float),
     "delayed_voice": ("delayed_voice_probability", float),
     "tts_max_chars": ("tts_max_chars", int),
+    "tts_chunk_chars": ("tts_chunk_max_chars", int),
+    "tts_max_chunks": ("tts_max_chunks", int),
+    "bark_timeout": ("bark_timeout_seconds", float),
     "tts_caption": ("tts_send_text_caption", _parse_bool_arg),
     "memory": ("memory_enabled", _parse_bool_arg),
     "memory_every": ("memory_update_every_messages", int),
@@ -127,7 +130,7 @@ def format_runtime_config(config: BotConfig) -> str:
         f"- tts: {config.tts_enabled}\n"
         f"- voice: {config.voice_reply_probability}\n"
         f"- delayed_voice: {config.delayed_voice_probability}\n"
-        f"- tts_max_chars: {config.tts_max_chars}\n"
+        f"- tts_max_chars: {config.tts_max_chars} (chunks: {config.tts_chunk_max_chars}x{config.tts_max_chunks}, timeout: {config.bark_timeout_seconds:.0f}s)\n"
         f"- tts_caption: {config.tts_send_text_caption}\n"
         f"- memory: {config.memory_enabled} (cada {config.memory_update_every_messages} msgs, max {config.memory_max_chars} chars)\n"
         f"- max_tokens: {config.max_tokens}\n"
@@ -206,8 +209,11 @@ class BotController:
     ) -> Any:
         if use_voice and self.tts is not None:
             try:
-                await bot.send_chat_action(chat_id=chat_id, action="record_voice")
-                ogg_bytes = await self.tts.synthesize_ogg(text)
+                async def _keep_recording() -> None:
+                    await bot.send_chat_action(chat_id=chat_id, action="record_voice")
+
+                await _keep_recording()
+                ogg_bytes = await self.tts.synthesize_ogg(text, on_progress=_keep_recording)
                 caption = text[:1000] if self.config.tts_send_text_caption else None
                 return await bot.send_voice(
                     chat_id=chat_id,
@@ -445,8 +451,13 @@ class BotController:
                 return
 
             try:
-                await context.bot.send_chat_action(chat_id=chat.id, action="record_voice")
-                ogg_bytes = await self.tts.synthesize_ogg(text_to_speak)
+                async def _keep_recording() -> None:
+                    await context.bot.send_chat_action(chat_id=chat.id, action="record_voice")
+
+                await _keep_recording()
+                ogg_bytes = await self.tts.synthesize_ogg(
+                    text_to_speak, on_progress=_keep_recording
+                )
                 caption = text_to_speak[:1000] if self.config.tts_send_text_caption else None
                 await context.bot.send_voice(
                     chat_id=chat.id,

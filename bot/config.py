@@ -146,10 +146,12 @@ class BotConfig:
     bark_bin: str = "~/bin/bark-main"
     bark_model_path: str = "~/models/bark-small_weights-q4_0.bin"
     bark_threads: int = 8
-    bark_timeout_seconds: float = 180.0
+    bark_timeout_seconds: float = 240.0
     voice_reply_probability: float = 0.10
     delayed_voice_probability: float = 0.35
-    tts_max_chars: int = 140
+    tts_max_chars: int = 220
+    tts_chunk_max_chars: int = 75
+    tts_max_chunks: int = 3
     tts_send_text_caption: bool = False
 
     # Persistencia de estado, historial y ajustes en caliente (/config)
@@ -194,6 +196,10 @@ class BotConfig:
             raise ValueError("BARK_TIMEOUT_SECONDS debe ser mayor que 0.")
         if self.tts_max_chars < 20:
             raise ValueError("TTS_MAX_CHARS debe ser al menos 20.")
+        if self.tts_chunk_max_chars < 20:
+            raise ValueError("TTS_CHUNK_MAX_CHARS debe ser al menos 20.")
+        if self.tts_max_chunks < 1:
+            raise ValueError("TTS_MAX_CHUNKS debe ser al menos 1.")
         if self.memory_update_every_messages < 2:
             raise ValueError("MEMORY_UPDATE_EVERY_MESSAGES debe ser al menos 2.")
         if self.memory_max_chars < 80:
@@ -280,10 +286,12 @@ class BotConfig:
             bark_bin=get("BARK_BIN") or cls.bark_bin,
             bark_model_path=get("BARK_MODEL_PATH") or cls.bark_model_path,
             bark_threads=int(get("BARK_THREADS", "8")),
-            bark_timeout_seconds=float(get("BARK_TIMEOUT_SECONDS", "180")),
+            bark_timeout_seconds=float(get("BARK_TIMEOUT_SECONDS", "240")),
             voice_reply_probability=float(get("VOICE_REPLY_PROBABILITY", "0.10")),
             delayed_voice_probability=float(get("DELAYED_VOICE_PROBABILITY", "0.35")),
-            tts_max_chars=int(get("TTS_MAX_CHARS", "140")),
+            tts_max_chars=int(get("TTS_MAX_CHARS", "220")),
+            tts_chunk_max_chars=int(get("TTS_CHUNK_MAX_CHARS", "75")),
+            tts_max_chunks=int(get("TTS_MAX_CHUNKS", "3")),
             tts_send_text_caption=_parse_bool(get("TTS_SEND_TEXT_CAPTION"), False),
             memory_enabled=_parse_bool(get("MEMORY_ENABLED"), True),
             memory_update_every_messages=int(get("MEMORY_UPDATE_EVERY_MESSAGES", "20")),

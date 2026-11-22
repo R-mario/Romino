@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from bot.config import BotConfig
 
@@ -14,34 +16,101 @@ logger = logging.getLogger(__name__)
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 _MD_RE = re.compile(r"[*_`~#>]+")
 _SPACES_RE = re.compile(r"\s+")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
-def prepare_tts_text(text: str, max_chars: int = 140) -> str:
-    """Limpia URLs y Markdown y acota longitud para que bark.cpp no tarde demasiado."""
+def _clean_text(text: str) -> str:
     cleaned = _URL_RE.sub("", text)
     cleaned = _MD_RE.sub("", cleaned)
-    cleaned = _SPACES_RE.sub(" ", cleaned).strip()
+    return _SPACES_RE.sub(" ", cleaned).strip()
+
+
+def _split_long_piece(piece: str, max_chars: int) -> list[str]:
+    """Divide una frase larga en trozos <= max_chars respetando comas o espacios."""
+    parts: list[str] = []
+    remaining = piece.strip()
+    while len(remaining) > max_chars:
+        snippet = remaining[:max_chars]
+        cut = -1
+        for sep in (", ", "; ", ": ", " "):
+            idx = snippet.rfind(sep)
+            if idx >= max_chars // 3:
+                cut = idx + (1 if sep != " " else 0)
+                break
+        if cut <= 0:
+            cut = max_chars
+        chunk = remaining[:cut].strip()
+        if chunk:
+            parts.append(chunk)
+        remaining = remaining[cut:].strip()
+    if remaining:
+        parts.append(remaining)
+    return parts
+
+
+def prepare_tts_text(text: str, max_chars: int = 220) -> str:
+    """Limpia URLs y Markdown y acota la longitud total máxima para síntesis de voz."""
+    cleaned = _clean_text(text)
     if not cleaned:
         return ""
     if len(cleaned) <= max_chars:
         return cleaned
 
-    # Intentar cortar en el último límite de frase dentro del máximo
     snippet = cleaned[:max_chars]
     for sep in (". ", "! ", "? "):
         idx = snippet.rfind(sep)
         if idx >= max_chars // 2:
             return snippet[: idx + 1].strip()
 
-    # Si no hay frase completa, cortar en el último espacio sin partir palabras
     space_idx = snippet.rfind(" ")
     if space_idx >= max_chars // 2:
         return snippet[:space_idx].rstrip(" ,;:") + "."
     return snippet.rstrip()
 
 
+def split_tts_chunks(
+    text: str,
+    *,
+    max_chars: int = 220,
+    chunk_max_chars: int = 75,
+    max_chunks: int = 3,
+) -> list[str]:
+    """
+    Divide textos largos en fragmentos cortos (~75 chars) aptos para la ventana óptima de Bark,
+    evitando timeouts y alucinaciones de 14 s por fragmento.
+    """
+    prepared = prepare_tts_text(text, max_chars=max_chars)
+    if not prepared:
+        return []
+    if len(prepared) <= chunk_max_chars:
+        return [prepared]
+
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(prepared) if s.strip()]
+    atomic_pieces: list[str] = []
+    for sent in sentences:
+        if len(sent) <= chunk_max_chars:
+            atomic_pieces.append(sent)
+        else:
+            atomic_pieces.extend(_split_long_piece(sent, chunk_max_chars))
+
+    chunks: list[str] = []
+    current = ""
+    for piece in atomic_pieces:
+        if not current:
+            current = piece
+        elif len(current) + 1 + len(piece) <= chunk_max_chars:
+            current = f"{current} {piece}"
+        else:
+            chunks.append(current)
+            current = piece
+    if current:
+        chunks.append(current)
+
+    return chunks[:max_chunks]
+
+
 class BarkCppTTS:
-    """Sintetizador de voz local bajo demanda usando bark.cpp (GGML) + ffmpeg (Opus OGG)."""
+    """Sintetizador de voz local bajo demanda con bark.cpp (GGML) + chunking + ffmpeg Opus."""
 
     def __init__(self, config: BotConfig) -> None:
         self.config = config
@@ -75,55 +144,136 @@ class BarkCppTTS:
             raise TimeoutError(f"Proceso excedió el tiempo máximo ({timeout}s): {cmd[0]}")
         return (proc.returncode or 0, stderr.decode("utf-8", errors="replace").strip())
 
-    async def synthesize_ogg(self, text: str) -> bytes:
-        """Genera un audio .ogg Opus listo para Telegram send_voice y libera temporales."""
-        prepared = prepare_tts_text(text, max_chars=self.config.tts_max_chars)
-        if not prepared:
+    async def synthesize_ogg(
+        self,
+        text: str,
+        *,
+        on_progress: Callable[[], Awaitable[None]] | None = None,
+    ) -> bytes:
+        """
+        Genera un audio .ogg Opus listo para Telegram send_voice.
+        Si el texto es largo, lo divide en fragmentos cortos y concatena los .wav en un solo .ogg.
+        """
+        chunks = split_tts_chunks(
+            text,
+            max_chars=self.config.tts_max_chars,
+            chunk_max_chars=self.config.tts_chunk_max_chars,
+            max_chunks=self.config.tts_max_chunks,
+        )
+        if not chunks:
             raise ValueError("Texto vacío tras limpiar para síntesis de voz.")
         if not self.is_available():
             raise FileNotFoundError(
                 "bark.cpp, el modelo GGML o ffmpeg no están disponibles en el sistema."
             )
 
+        seed = random.randint(1, 2_000_000_000)
+
         with tempfile.TemporaryDirectory(prefix="bark_tts_") as tmpdir:
             tmp = Path(tmpdir)
-            wav_path = tmp / "out.wav"
+            wav_files: list[Path] = []
+
+            for idx, chunk in enumerate(chunks):
+                if on_progress is not None:
+                    try:
+                        await on_progress()
+                    except Exception:
+                        pass
+
+                wav_path = tmp / f"chunk_{idx}.wav"
+                bark_cmd = [
+                    str(self._bark_bin()),
+                    "-m",
+                    str(self._model_path()),
+                    "-p",
+                    chunk,
+                    "-o",
+                    str(wav_path),
+                    "-t",
+                    str(self.config.bark_threads),
+                    "-s",
+                    str(seed),
+                ]
+                try:
+                    rc, err = await self._run_process(
+                        bark_cmd, timeout=self.config.bark_timeout_seconds
+                    )
+                except TimeoutError:
+                    if wav_files:
+                        logger.warning(
+                            "Timeout en fragmento %d/%d de bark.cpp; se envían los %d ya generados.",
+                            idx + 1,
+                            len(chunks),
+                            len(wav_files),
+                        )
+                        break
+                    raise
+
+                if rc != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
+                    if wav_files:
+                        logger.warning(
+                            "Error en fragmento %d/%d de bark.cpp (rc=%d); se envían los %d previos.",
+                            idx + 1,
+                            len(chunks),
+                            rc,
+                            len(wav_files),
+                        )
+                        break
+                    raise RuntimeError(f"bark.cpp falló (rc={rc}): {err[-300:]}")
+
+                wav_files.append(wav_path)
+
             ogg_path = tmp / "out.ogg"
+            if len(wav_files) == 1:
+                ffmpeg_cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(wav_files[0]),
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "32k",
+                    "-vbr",
+                    "on",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "48000",
+                    str(ogg_path),
+                ]
+            else:
+                list_file = tmp / "concat.txt"
+                list_file.write_text(
+                    "\n".join(f"file '{p.as_posix()}'" for p in wav_files) + "\n",
+                    encoding="utf-8",
+                )
+                ffmpeg_cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(list_file),
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "32k",
+                    "-vbr",
+                    "on",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "48000",
+                    str(ogg_path),
+                ]
 
-            bark_cmd = [
-                str(self._bark_bin()),
-                "-m",
-                str(self._model_path()),
-                "-p",
-                prepared,
-                "-o",
-                str(wav_path),
-                "-t",
-                str(self.config.bark_threads),
-            ]
-            rc, err = await self._run_process(bark_cmd, timeout=self.config.bark_timeout_seconds)
-            if rc != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
-                raise RuntimeError(f"bark.cpp falló (rc={rc}): {err[-300:]}")
-
-            ffmpeg_cmd = [
-                "ffmpeg",
-                "-y",
-                "-loglevel",
-                "error",
-                "-i",
-                str(wav_path),
-                "-c:a",
-                "libopus",
-                "-b:a",
-                "32k",
-                "-vbr",
-                "on",
-                "-ac",
-                "1",
-                "-ar",
-                "48000",
-                str(ogg_path),
-            ]
             rc_ff, err_ff = await self._run_process(ffmpeg_cmd, timeout=30.0)
             if rc_ff != 0 or not ogg_path.exists() or ogg_path.stat().st_size == 0:
                 raise RuntimeError(f"ffmpeg falló al codificar Opus (rc={rc_ff}): {err_ff[-300:]}")

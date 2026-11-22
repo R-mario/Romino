@@ -88,7 +88,7 @@ class _StubTTS:
     def is_available(self) -> bool:
         return self.available
 
-    async def synthesize_ogg(self, text: str) -> bytes:
+    async def synthesize_ogg(self, text: str, **kwargs: Any) -> bytes:
         self.calls.append(text)
         if self.fail:
             raise RuntimeError("bark timeout")

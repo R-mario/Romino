@@ -82,6 +82,10 @@ def build_application(env_path: Path | None = None) -> Any:
         .build()
     )
 
+    async def on_error(update: object, context: Any) -> None:
+        logger.warning("Error transitorio en Telegram polling/handler: %s", context.error)
+
+    app.add_error_handler(on_error)
     app.add_handler(CommandHandler("start", controller.cmd_start))
     app.add_handler(CommandHandler("romino_help", controller.cmd_start))
     app.add_handler(CommandHandler("romino_id", controller.cmd_id))

@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -168,6 +169,8 @@ class BarkCppTTS:
             )
 
         seed = random.randint(1, 2_000_000_000)
+        t_total_start = time.monotonic()
+        chunk_durations: list[float] = []
 
         with tempfile.TemporaryDirectory(prefix="bark_tts_") as tmpdir:
             tmp = Path(tmpdir)
@@ -194,33 +197,41 @@ class BarkCppTTS:
                     "-s",
                     str(seed),
                 ]
+                t_chunk_start = time.monotonic()
                 try:
                     rc, err = await self._run_process(
                         bark_cmd, timeout=self.config.bark_timeout_seconds
                     )
                 except TimeoutError:
+                    elapsed = time.monotonic() - t_chunk_start
                     if wav_files:
                         logger.warning(
-                            "Timeout en fragmento %d/%d de bark.cpp; se envían los %d ya generados.",
+                            "[TTS] timeout fragmento %d/%d (chars=%d, %.1fs); se envían %d previos",
                             idx + 1,
                             len(chunks),
+                            len(chunk),
+                            elapsed,
                             len(wav_files),
                         )
                         break
                     raise
 
+                elapsed = time.monotonic() - t_chunk_start
                 if rc != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
                     if wav_files:
                         logger.warning(
-                            "Error en fragmento %d/%d de bark.cpp (rc=%d); se envían los %d previos.",
+                            "[TTS] error fragmento %d/%d (rc=%d, chars=%d, %.1fs); se envían %d previos",
                             idx + 1,
                             len(chunks),
                             rc,
+                            len(chunk),
+                            elapsed,
                             len(wav_files),
                         )
                         break
-                    raise RuntimeError(f"bark.cpp falló (rc={rc}): {err[-300:]}")
+                    raise RuntimeError(f"bark.cpp falló (rc={rc}, chars={len(chunk)}): {err[-300:]}")
 
+                chunk_durations.append(elapsed)
                 wav_files.append(wav_path)
 
             ogg_path = tmp / "out.ogg"
@@ -278,4 +289,17 @@ class BarkCppTTS:
             if rc_ff != 0 or not ogg_path.exists() or ogg_path.stat().st_size == 0:
                 raise RuntimeError(f"ffmpeg falló al codificar Opus (rc={rc_ff}): {err_ff[-300:]}")
 
-            return ogg_path.read_bytes()
+            ogg_bytes = ogg_path.read_bytes()
+            total_s = time.monotonic() - t_total_start
+            times_str = ",".join(f"{d:.1f}s" for d in chunk_durations)
+            logger.info(
+                "[TTS] ok chunks=%d/%d chars=%d total=%.1fs times=[%s] ogg=%.1fKB seed=%d",
+                len(wav_files),
+                len(chunks),
+                sum(len(c) for c in chunks[: len(wav_files)]),
+                total_s,
+                times_str,
+                len(ogg_bytes) / 1024.0,
+                seed,
+            )
+            return ogg_bytes

@@ -28,12 +28,14 @@ echo "[1/3] Configurando servicio runit: llama-server..."
 mkdir -p "$SV_DIR/llama-server/log"
 cat > "$SV_DIR/llama-server/run" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
+export TZ=Europe/Madrid
 exec 2>&1
 exec "$LLAMA_BIN" \\
   -m "$MODEL_FILE" \\
   --host 127.0.0.1 \\
   --port 8080 \\
   -t 4 \\
+  --threads-batch 8 \\
   -c 1024 \\
   --batch-size 256 \\
   --parallel 1 \\
@@ -52,6 +54,7 @@ echo "[2/3] Configurando servicio runit: telegram-bot..."
 mkdir -p "$SV_DIR/telegram-bot/log"
 cat > "$SV_DIR/telegram-bot/run" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
+export TZ=Europe/Madrid
 exec 2>&1
 cd "$REPO_DIR" || exit 1
 # Esperar a que llama-server responda antes de lanzar el bot
@@ -70,7 +73,7 @@ chmod +x "$SV_DIR/telegram-bot/run"
 cat > "$SV_DIR/telegram-bot/log/run" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/sh
 mkdir -p "$HOME/logs/telegram-bot"
-exec svlogd -tt "$HOME/logs/telegram-bot"
+exec svlogd "$HOME/logs/telegram-bot"
 EOF
 chmod +x "$SV_DIR/telegram-bot/log/run"
 

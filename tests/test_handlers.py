@@ -405,6 +405,27 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.get_memory(-1001), "")
         self.assertIn("borrada", m_clr.replies[0])
 
+    async def test_cmd_logs_reads_tail_for_admin_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_file = Path(tmp) / "current"
+            log_file.write_text("line1\nline2\nline3\nline4\n", encoding="utf-8")
+            cfg = BotConfig(telegram_bot_token="123:abc", admin_user_id=777)
+            controller = BotController(cfg, GroupContextStore(), _StubLLM(), log_file_path=log_file)
+
+            u_other, m_other = self._make_update(
+                chat_id=100, chat_type="private", user_id=111, user_name="Otro", msg_id=1, text="/romino_logs"
+            )
+            await controller.cmd_logs(u_other, SimpleNamespace(bot=_FakeBot(), args=[]))
+            self.assertEqual(m_other.replies, [])
+
+            u_adm, m_adm = self._make_update(
+                chat_id=777, chat_type="private", user_id=777, user_name="Admin", msg_id=2, text="/romino_logs 2"
+            )
+            await controller.cmd_logs(u_adm, SimpleNamespace(bot=_FakeBot(), args=["2"]))
+            self.assertEqual(len(m_adm.replies), 1)
+            self.assertIn("line3\nline4", m_adm.replies[0])
+            self.assertNotIn("line1", m_adm.replies[0])
+
 
 if __name__ == "__main__":
     unittest.main()

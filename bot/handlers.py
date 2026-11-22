@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 import logging
+from pathlib import Path
 import random
 import shutil
 import subprocess
+import time
 from typing import Any
 
 from bot.config import (
@@ -170,12 +173,14 @@ class BotController:
         llm_client: LlamaClient,
         tts_client: BarkCppTTS | None = None,
         rng: random.Random | None = None,
+        log_file_path: Path | None = None,
     ) -> None:
         self.config = config
         self.store = store
         self.llm = llm_client
         self.tts = tts_client
         self.rng = rng or random.Random()
+        self.log_file_path = log_file_path or (Path.home() / "logs" / "telegram-bot" / "current")
         self.busy_semaphore = asyncio.Semaphore(1)
 
     def _is_admin(self, user_id: int | None) -> bool:
@@ -329,19 +334,27 @@ class BotController:
 
         async with self.busy_semaphore:
             existing = self.store.get_memory(chat_id)
+            t0 = time.monotonic()
             try:
                 updated = await self.llm.summarize_memory(
                     existing_memory=existing,
                     recent_messages=recent,
                 )
             except Exception as exc:
-                logger.warning("Error actualizando memoria de chat %s: %s", chat_id, exc)
+                logger.warning("[MEMORY] error chat=%s: %s", chat_id, exc)
                 return None
             if not updated:
                 return None
-            return self.store.set_memory(
+            saved = self.store.set_memory(
                 chat_id, updated, max_chars=self.config.memory_max_chars
             )
+            logger.info(
+                "[MEMORY] chat=%s updated chars=%d ms=%.0f",
+                chat_id,
+                len(saved),
+                (time.monotonic() - t0) * 1000.0,
+            )
+            return saved
 
     async def run_memory_maintenance(self) -> int:
         """Refresca en segundo plano hasta 1 chat que supere el umbral de mensajes nuevos."""
@@ -405,6 +418,38 @@ class BotController:
         else:
             await msg.reply_text("Uso: /romino_memoria [set <texto> | add <nota> | refresh | clear]")
 
+    async def cmd_logs(self, update: Any, context: Any) -> None:
+        """Muestra las últimas líneas del log del bot (solo administrador)."""
+        msg = update.effective_message
+        user = update.effective_user
+        if not msg or not self._is_admin(user.id if user else None):
+            return
+
+        args = getattr(context, "args", None) or []
+        lines_n = 15
+        if args:
+            try:
+                lines_n = max(1, min(40, int(args[0])))
+            except ValueError:
+                await msg.reply_text("Uso: /romino_logs [num_lineas 1..40]")
+                return
+
+        if not self.log_file_path.exists():
+            await msg.reply_text(f"Archivo de log no encontrado en {self.log_file_path}.")
+            return
+
+        try:
+            with self.log_file_path.open("r", encoding="utf-8", errors="replace") as fh:
+                tail = list(deque(fh, maxlen=lines_n))
+        except Exception as exc:
+            await msg.reply_text(f"No se pudo leer el log: {exc}")
+            return
+
+        content = "".join(tail).strip() or "(log vacío)"
+        if len(content) > 3800:
+            content = "…\n" + content[-3800:]
+        await msg.reply_text(f"Últimas {len(tail)} líneas de log:\n\n{content}")
+
     async def cmd_voz(self, update: Any, context: Any) -> None:
         """Sintetiza un texto directo (/voz hola) o responde por voz al mensaje citado."""
         msg = update.effective_message
@@ -427,11 +472,13 @@ class BotController:
             return
 
         if self.busy_semaphore.locked():
+            logger.info("[BUSY] chat=%s dropped cmd=romino_voz", chat.id)
             if self.config.notify_when_busy:
                 await msg.reply_text("Motor ocupado, inténtalo en unos segundos.")
             return
 
         async with self.busy_semaphore:
+            source = "direct" if direct_text else "quoted_llm"
             if direct_text:
                 text_to_speak = direct_text
             else:
@@ -444,12 +491,13 @@ class BotController:
                         group_memory=self.store.get_memory(chat.id) if self.config.memory_enabled else "",
                     )
                 except Exception as exc:
-                    logger.warning("Error consultando LLM en /voz: %s", exc)
+                    logger.warning("[VOZ] error LLM chat=%s: %s", chat.id, exc)
                     return
 
             if not text_to_speak:
                 return
 
+            logger.info("[VOZ] chat=%s source=%s chars=%d", chat.id, source, len(text_to_speak))
             try:
                 async def _keep_recording() -> None:
                     await context.bot.send_chat_action(chat_id=chat.id, action="record_voice")
@@ -466,7 +514,9 @@ class BotController:
                     caption=caption,
                 )
             except Exception as exc:
-                logger.warning("Error generando nota de voz en /voz: %s", exc)
+                logger.warning(
+                    "[VOZ] error chat=%s chars=%d: %s", chat.id, len(text_to_speak), exc
+                )
                 await msg.reply_text("No se pudo generar el audio en este momento.")
 
     async def handle_message(self, update: Any, context: Any) -> None:
@@ -520,6 +570,7 @@ class BotController:
             return
 
         if self.busy_semaphore.locked():
+            logger.info("[BUSY] chat=%s dropped mode=%s", chat_id, intervention.value)
             if intervention == InterventionType.DIRECT_REPLY and self.config.notify_when_busy:
                 await msg.reply_text("Procesando otra consulta, inténtalo en unos segundos.")
             return
@@ -528,6 +579,7 @@ class BotController:
             await context.bot.send_chat_action(chat_id=chat_id, action="typing")
             recent = self.store.get_recent_messages(chat_id, self.config.prompt_context_messages)
             group_memory = self.store.get_memory(chat_id) if self.config.memory_enabled else ""
+            t0 = time.monotonic()
             try:
                 reply = await self.llm.generate(
                     intervention=intervention,
@@ -535,15 +587,24 @@ class BotController:
                     group_memory=group_memory,
                 )
             except Exception as exc:
-                logger.warning("Error consultando llama-server: %s", exc)
+                logger.warning("[LLM] error chat=%s mode=%s: %s", chat_id, intervention.value, exc)
                 if intervention == InterventionType.DIRECT_REPLY and is_private:
                     await msg.reply_text("Error consultando el motor LLM local.")
                 return
 
+            llm_ms = (time.monotonic() - t0) * 1000.0
             if not reply:
                 return
 
             use_voice = self._should_use_voice(intervention)
+            logger.info(
+                "[REPLY] chat=%s mode=%s llm_ms=%.0f chars=%d voice=%s",
+                chat_id,
+                intervention.value,
+                llm_ms,
+                len(reply),
+                use_voice,
+            )
             is_summary = intervention == InterventionType.RANDOM_GROUP_SUMMARY
             sent = await self._deliver_response(
                 bot=context.bot,
@@ -592,6 +653,7 @@ class BotController:
                     chat_id, self.config.prompt_context_messages
                 )
 
+            t0 = time.monotonic()
             try:
                 await bot.send_chat_action(chat_id=chat_id, action="typing")
                 group_memory = self.store.get_memory(chat_id) if self.config.memory_enabled else ""
@@ -602,9 +664,10 @@ class BotController:
                     group_memory=group_memory,
                 )
             except Exception as exc:
-                logger.warning("Error en intervención diferida (chat %s): %s", chat_id, exc)
+                logger.warning("[DELAYED] error LLM chat=%s: %s", chat_id, exc)
                 return False
 
+            llm_ms = (time.monotonic() - t0) * 1000.0
             if not reply:
                 return False
 
@@ -613,6 +676,15 @@ class BotController:
                 target_msg.message_id
                 if (intervention == InterventionType.DELAYED_PAST_REPLY and target_msg is not None)
                 else None
+            )
+            logger.info(
+                "[DELAYED] chat=%s mode=%s target_msg=%s llm_ms=%.0f chars=%d voice=%s",
+                chat_id,
+                intervention.value,
+                reply_to_id,
+                llm_ms,
+                len(reply),
+                use_voice,
             )
 
             try:

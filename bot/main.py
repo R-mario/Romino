@@ -54,6 +54,7 @@ def build_application(env_path: Path | None = None) -> Any:
                     BotCommand("romino_memoria", "Ver/editar memoria del grupo (admin)"),
                     BotCommand("romino_config", "Ajustar probabilidades y modos (admin)"),
                     BotCommand("romino_status", "Estado del LLM, voz y batería (admin)"),
+                    BotCommand("romino_logs", "Ver últimas líneas del log (admin)"),
                 ]
             )
         except Exception as exc:
@@ -93,6 +94,7 @@ def build_application(env_path: Path | None = None) -> Any:
     app.add_handler(CommandHandler("romino_status", controller.cmd_status))
     app.add_handler(CommandHandler("romino_config", controller.cmd_config))
     app.add_handler(CommandHandler("romino_memoria", controller.cmd_memoria))
+    app.add_handler(CommandHandler("romino_logs", controller.cmd_logs))
     app.add_handler(CommandHandler("romino_voz", controller.cmd_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, controller.handle_message))
     return app
@@ -101,7 +103,7 @@ def build_application(env_path: Path | None = None) -> Any:
 def main() -> None:
     app = build_application()
     logger.info("Iniciando polling de Telegram...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True, bootstrap_retries=-1)
 
 
 if __name__ == "__main__":

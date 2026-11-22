@@ -151,10 +151,18 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("0.25", res)
         self.assertAlmostEqual(cfg.random_reply_probability, 0.25)
 
+        res_mention = apply_runtime_config(cfg, "mention_prob", "0.6")
+        self.assertIn("0.6", res_mention)
+        self.assertAlmostEqual(cfg.mention_probability, 0.6)
+
         with self.assertRaises(ValueError):
             apply_runtime_config(cfg, "random", "2.5")
         # Rollback intacto
         self.assertAlmostEqual(cfg.random_reply_probability, 0.25)
+
+        with self.assertRaises(ValueError):
+            apply_runtime_config(cfg, "mention_prob", "-0.1")
+        self.assertAlmostEqual(cfg.mention_probability, 0.6)
 
     async def test_group_summary_sends_standalone_message_without_reply(self) -> None:
         cfg = BotConfig(

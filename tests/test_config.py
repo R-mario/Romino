@@ -15,6 +15,7 @@ class TestConfig(unittest.TestCase):
                 "ALLOWED_CHAT_IDS": "-1001, -1002, 555",
                 "ADMIN_USER_ID": "555",
                 "RANDOM_REPLY_PROBABILITY": "0.12",
+                "MENTION_PROBABILITY": "0.65",
                 "SUMMARY_INTERVENTION_RATIO": "0.5",
                 "DELAYED_REPLY_ENABLED": "true",
                 "DELAYED_REPLY_MIN_AGE_SECONDS": "60",
@@ -25,6 +26,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.allowed_chat_ids, {-1001, -1002, 555})
         self.assertEqual(cfg.admin_user_id, 555)
         self.assertAlmostEqual(cfg.random_reply_probability, 0.12)
+        self.assertAlmostEqual(cfg.mention_probability, 0.65)
         self.assertEqual(cfg.keywords, ("oneplus", "bot", "ia"))
 
     def test_missing_token_raises(self) -> None:

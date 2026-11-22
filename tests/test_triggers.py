@@ -135,6 +135,85 @@ class TestTriggers(unittest.TestCase):
         )
         self.assertEqual(no_res, InterventionType.NONE)
 
+    def test_mention_and_keyword_respect_mention_probability(self) -> None:
+        cfg = self._base_config()
+        cfg.keywords = ("ia", "romino")
+        cfg.mention_probability = 0.5
+        cfg.random_reply_probability = 1.0  # No debe caer en aleatorio si se mencionó y no tocó
+        store = GroupContextStore()
+
+        # Mención explícita en grupo: 0.2 < 0.5 -> responde; 0.8 >= 0.5 -> ignora
+        self.assertEqual(
+            decide_live_intervention(
+                config=cfg,
+                store=store,
+                chat_id=-1001,
+                text="@rominempebot hola",
+                is_private=False,
+                is_mentioned=True,
+                is_reply_to_bot=False,
+                rng=FixedRng([0.2]),
+            ),
+            InterventionType.DIRECT_REPLY,
+        )
+        self.assertEqual(
+            decide_live_intervention(
+                config=cfg,
+                store=store,
+                chat_id=-1001,
+                text="@rominempebot hola",
+                is_private=False,
+                is_mentioned=True,
+                is_reply_to_bot=False,
+                rng=FixedRng([0.8]),
+            ),
+            InterventionType.NONE,
+        )
+
+        # Palabra clave en grupo: mismo control mention_probability
+        self.assertEqual(
+            decide_live_intervention(
+                config=cfg,
+                store=store,
+                chat_id=-1001,
+                text="ey Romino qué tal",
+                is_private=False,
+                is_mentioned=False,
+                is_reply_to_bot=False,
+                rng=FixedRng([0.3]),
+            ),
+            InterventionType.DIRECT_REPLY,
+        )
+        self.assertEqual(
+            decide_live_intervention(
+                config=cfg,
+                store=store,
+                chat_id=-1001,
+                text="ey Romino qué tal",
+                is_private=False,
+                is_mentioned=False,
+                is_reply_to_bot=False,
+                rng=FixedRng([0.9]),
+            ),
+            InterventionType.NONE,
+        )
+
+        # Chat privado sigue respondiendo al 100 % incluso con mention_probability=0.0
+        cfg.mention_probability = 0.0
+        self.assertEqual(
+            decide_live_intervention(
+                config=cfg,
+                store=store,
+                chat_id=555,
+                text="hola en privado",
+                is_private=True,
+                is_mentioned=False,
+                is_reply_to_bot=False,
+                rng=FixedRng([0.99]),
+            ),
+            InterventionType.DIRECT_REPLY,
+        )
+
     def test_random_live_summary_vs_direct(self) -> None:
         cfg = self._base_config()
         store = GroupContextStore()

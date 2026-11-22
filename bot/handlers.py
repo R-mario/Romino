@@ -41,6 +41,7 @@ def _parse_bool_arg(raw: str) -> bool:
 
 _RUNTIME_FIELD_MAP: dict[str, tuple[str, Any]] = {
     "direct": ("direct_reply_enabled", _parse_bool_arg),
+    "mention_prob": ("mention_probability", float),
     "reply_prob": ("reply_to_bot_probability", float),
     "random": ("random_reply_probability", float),
     "summary": ("summary_intervention_ratio", float),
@@ -119,6 +120,7 @@ def format_runtime_config(config: BotConfig) -> str:
     return (
         "Configuración activa:\n"
         f"- direct: {config.direct_reply_enabled}\n"
+        f"- mention_prob: {config.mention_probability}\n"
         f"- reply_prob: {config.reply_to_bot_probability}\n"
         f"- random: {config.random_reply_probability}\n"
         f"- summary: {config.summary_intervention_ratio}\n"

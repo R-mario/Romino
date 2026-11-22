@@ -47,10 +47,18 @@ def decide_live_intervention(
     if not is_chat_allowed(chat_id, config.allowed_chat_ids):
         return InterventionType.NONE
 
-    # 1. Respuesta directa explícita (privado, mención @bot o palabra clave)
-    explicit_direct = is_private or is_mentioned or contains_keyword(text, config.keywords)
-    if explicit_direct:
+    # 1. Chat privado: responde siempre que direct_reply_enabled esté activo
+    if is_private:
         if config.direct_reply_enabled:
+            return InterventionType.DIRECT_REPLY
+        return InterventionType.NONE
+
+    # 1a. Mención explícita (@bot) o palabra clave en grupo: gobernado por mention_probability
+    if is_mentioned or contains_keyword(text, config.keywords):
+        if not config.direct_reply_enabled or config.mention_probability <= 0.0:
+            return InterventionType.NONE
+        rand = rng or random
+        if config.mention_probability >= 1.0 or rand.random() < config.mention_probability:
             return InterventionType.DIRECT_REPLY
         return InterventionType.NONE
 
